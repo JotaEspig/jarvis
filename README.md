@@ -20,6 +20,15 @@ Você (voz) ⇄ Jarvis (Haiku)  ── gera prompt + escolhe modelo/effort ─�
 Componentes: FastAPI + WebSocket (UI web local, push-to-talk) · STT `faster-whisper` · TTS `Piper`
 (voz pt-BR) · Jarvis via SDK `anthropic` · worker via **Claude Agent SDK**.
 
+## Pré-requisitos
+
+- **`ANTHROPIC_API_KEY`** (obrigatório) — a mesma chave do Claude Code; usada pelo Jarvis (Haiku) e
+  pelo worker. Vai no arquivo `.env`.
+- Um **repositório alvo** onde o worker vai atuar (`HOST_TARGET_REPO` no Docker, `JARVIS_TARGET_REPO`
+  local). Pode ser o próprio projeto que você está desenvolvendo.
+- **Docker** (fluxo recomendado) **ou** **Python 3.12 + [uv](https://docs.astral.sh/uv/)** (fluxo local).
+- Um navegador (Chrome/Edge recomendados p/ o microfone). O microfone é pedido pelo navegador.
+
 ## Instalação para a equipe (Docker — recomendado)
 
 Modelos de voz já vêm embutidos na imagem; só precisa de `ANTHROPIC_API_KEY`.
