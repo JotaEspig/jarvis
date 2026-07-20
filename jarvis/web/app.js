@@ -30,10 +30,36 @@ function addWorkerBlock(kind, text) {
     const pre = document.createElement("pre");
     pre.textContent = text;
     workerEl.appendChild(pre);
+  } else if (kind === "tool") {
+    const el = document.createElement("div");
+    el.className = "tool";
+    el.textContent = `🔧 ${text}`;
+    workerEl.appendChild(el);
   } else {
     addMsg(workerEl, "worker", text);
   }
   workerEl.scrollTop = workerEl.scrollHeight;
+}
+
+function addApproval(text) {
+  addMsg(logEl, "jarvis", text);
+  const el = document.createElement("div");
+  el.className = "approval";
+  const yes = document.createElement("button");
+  yes.textContent = "Autorizar";
+  const no = document.createElement("button");
+  no.textContent = "Negar";
+  yes.onclick = () => {
+    send({ type: "control", action: "approve" });
+    el.remove();
+  };
+  no.onclick = () => {
+    send({ type: "control", action: "deny" });
+    el.remove();
+  };
+  el.append(yes, no);
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
 }
 
 function playAudio(b64, format = "wav") {
@@ -73,8 +99,13 @@ function connect() {
         if (msg.data) playAudio(msg.data, msg.format || "wav");
         break;
       case "question":
-      case "approval":
         addMsg(logEl, "jarvis", msg.text || "(pergunta)");
+        setStatus("aguardando sua resposta…");
+        textEl.focus();
+        break;
+      case "approval":
+        addApproval(msg.text || "Autorizar esta ação?");
+        setStatus("aguardando autorização…");
         break;
     }
   };

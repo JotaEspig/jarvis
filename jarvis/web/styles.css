@@ -120,3 +120,7 @@ button {
 button:hover { border-color: var(--accent); }
 .mic.recording { background: #dc2626; color: #fff; border-color: #dc2626; }
 .controls { margin-top: 8px; }
+.tool { font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace; padding: 2px 0; }
+.approval { display: flex; gap: 8px; }
+.approval button:first-child { border-color: var(--jarvis); color: var(--jarvis); }
+.approval button:last-child { border-color: #dc2626; color: #dc2626; }

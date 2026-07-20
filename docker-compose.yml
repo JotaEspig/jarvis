@@ -1,0 +1,17 @@
+services:
+  jarvis:
+    build: .
+    ports:
+      - "8765:8765"
+    env_file:
+      - .env
+    environment:
+      # O worker atua neste caminho dentro do container (o repo é montado abaixo).
+      JARVIS_TARGET_REPO: /workspace
+      JARVIS_HOST: 0.0.0.0
+      JARVIS_PORT: "8765"
+    volumes:
+      # O projeto em que o worker vai trabalhar (defina HOST_TARGET_REPO no .env).
+      - ${HOST_TARGET_REPO:-.}:/workspace
+      # Skills/subagents/config GLOBAIS do Claude Code do host (opcional, read-only).
+      - ${HOME}/.claude:/root/.claude:ro

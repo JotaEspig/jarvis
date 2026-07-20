@@ -26,6 +26,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .bridge import Bridge
 from .config import settings
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -52,29 +53,14 @@ async def config() -> dict:
 @app.websocket("/ws")
 async def ws(websocket: WebSocket) -> None:
     await websocket.accept()
+    bridge = Bridge(send=websocket.send_json)
     await websocket.send_json(
-        {"type": "status", "state": "idle", "text": "Conectado. (esqueleto: modo eco)"}
+        {"type": "status", "state": "intake", "text": "Conectado. Fale ou digite."}
     )
     try:
         while True:
             msg = await websocket.receive_json()
-            # Esqueleto: ecoa como transcrição do usuário + resposta placeholder do Jarvis.
-            if msg.get("type") == "text":
-                text = msg.get("text", "")
-                await websocket.send_json(
-                    {"type": "transcript", "role": "user", "text": text}
-                )
-                await websocket.send_json(
-                    {
-                        "type": "transcript",
-                        "role": "jarvis",
-                        "text": f"(eco) recebi: {text!r}. Isso é tudo?",
-                    }
-                )
-            else:
-                await websocket.send_json(
-                    {"type": "status", "state": "idle", "text": f"eco: {msg}"}
-                )
+            await bridge.handle(msg)
     except WebSocketDisconnect:
         pass
 
