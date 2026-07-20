@@ -15,10 +15,22 @@
     <main>
       <section class="panel conversation">
         <h2>Conversa</h2>
+        <div class="repo-bar">
+          <input
+            id="repo"
+            type="text"
+            placeholder="repositório alvo (opcional — só p/ alterar arquivos)"
+            autocomplete="off"
+          />
+          <button id="set-repo">Definir</button>
+        </div>
         <div id="log" class="log"></div>
+        <div id="attachments" class="attachments"></div>
         <div class="composer">
           <button id="mic" class="mic" title="Segure para falar (push-to-talk)">🎙️</button>
-          <input id="text" type="text" placeholder="ou digite aqui…" autocomplete="off" />
+          <button id="attach" title="Anexar arquivo (imagem, PDF, texto…)">📎</button>
+          <input id="file" type="file" multiple hidden />
+          <input id="text" type="text" placeholder="digite, cole um link ou uma imagem…" autocomplete="off" />
           <button id="send">Enviar</button>
         </div>
         <div class="controls">

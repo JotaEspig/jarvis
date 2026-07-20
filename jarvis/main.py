@@ -46,7 +46,7 @@ async def config() -> dict:
         "jarvis_model": settings.jarvis_model,
         "worker_model_simple": settings.worker_model_simple,
         "worker_model_complex": settings.worker_model_complex,
-        "target_repo": str(settings.target_repo),
+        "target_repo": str(settings.target_repo) if settings.target_repo else None,
     }
 
 

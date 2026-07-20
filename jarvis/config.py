@@ -30,9 +30,12 @@ class Settings(BaseSettings):
     worker_model_complex: str = "claude-opus-4-8"  # tarefas complexas
     worker_fallback_model: str = "claude-opus-4-8"
 
-    # --- Repositório alvo do worker ---
-    # Diretório em que o coding agent vai atuar. Default: o cwd atual.
-    target_repo: Path = Field(default_factory=Path.cwd)
+    # --- Repositório alvo do worker (opcional) ---
+    # Diretório em que o coding agent atua. É OPCIONAL e definido dinamicamente na
+    # sessão (pela UI). Só é obrigatório para ALTERAR arquivos; sem ele, o Jarvis
+    # funciona em modo conversa (o worker pode raciocinar, mas não escreve).
+    # Este valor serve apenas de padrão inicial da sessão (ex.: /workspace no Docker).
+    target_repo: Path | None = None
 
     # --- Voz ---
     whisper_model: str = "small"  # tiny/base/small/medium/large-v3

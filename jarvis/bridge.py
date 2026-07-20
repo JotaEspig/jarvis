@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from . import worker
@@ -62,16 +63,23 @@ class Bridge:
         if mtype == "control":
             await self._handle_control(msg)
             return
+        attachments: list[dict] = []
         if mtype == "audio":
             text = await self._transcribe(msg.get("data", ""))
         elif mtype == "text":
             text = (msg.get("text") or "").strip()
+            attachments = [
+                a for a in (msg.get("attachments") or []) if a.get("data")
+            ]
         else:
             return
-        if not text:
+        if not text and not attachments:
             return
-        await self.send({"type": "transcript", "role": "user", "text": text})
-        await self._route_utterance(text)
+        label = text
+        if attachments:
+            label = f"{text}  📎 {len(attachments)} anexo(s)".strip()
+        await self.send({"type": "transcript", "role": "user", "text": label})
+        await self._route_utterance(text, attachments)
 
     async def _handle_control(self, msg: dict) -> None:
         action = msg.get("action")
@@ -81,6 +89,23 @@ class Bridge:
             self.s.resolve_pending(True)
         elif action == "deny":
             self.s.resolve_pending(False)
+        elif action == "set_repo":
+            await self._set_repo(msg.get("path", ""))
+
+    async def _set_repo(self, path: str) -> None:
+        path = (path or "").strip()
+        if not path:
+            self.s.target_repo = None
+            await self.send({"type": "repo", "path": None})
+            await self._status("Modo conversa (sem repositório; não altero arquivos).")
+            return
+        p = Path(path).expanduser()
+        if not p.is_dir():
+            await self._status(f"Caminho inválido (não é um diretório): {path}")
+            return
+        self.s.target_repo = p
+        await self.send({"type": "repo", "path": str(p)})
+        await self._status(f"Repositório alvo: {p}")
 
     async def _transcribe(self, data_b64: str) -> str:
         if not data_b64:
@@ -94,21 +119,25 @@ class Bridge:
             await self._status("STT indisponível — digite o texto.")
             return ""
 
-    async def _route_utterance(self, text: str) -> None:
+    async def _route_utterance(
+        self, text: str, attachments: list[dict] | None = None
+    ) -> None:
         # Se o worker aguarda uma resposta/decisão, esta fala a resolve.
         if self.s.pending is not None and not self.s.pending.done():
-            self.s.resolve_pending(text)
+            self.s.resolve_pending(text or "[anexo enviado]")
             return
         if self.s.state in (State.INTAKE, State.DONE):
-            await self.jarvis_turn(text)
+            await self.jarvis_turn(text, attachments)
         elif self.s.state == State.WORKING:
             await self._status("O worker está trabalhando; aguarde a próxima pergunta.")
 
     # ---- intake -------------------------------------------------------
-    async def jarvis_turn(self, text: str) -> None:
+    async def jarvis_turn(
+        self, text: str, attachments: list[dict] | None = None
+    ) -> None:
         self.s.state = State.INTAKE
         try:
-            reply = await self.s.brain.reply(text)
+            reply = await self.s.brain.reply(text, attachments)
         except Exception as exc:
             log.exception("Falha no Jarvis (Haiku)")
             await self._status(f"Erro no Jarvis: {exc}")
@@ -137,8 +166,13 @@ class Bridge:
                 "effort": handoff.effort,
             }
         )
+        mode = (
+            f"no repositório {self.s.target_repo}"
+            if self.s.target_repo is not None
+            else "em modo conversa, sem alterar arquivos"
+        )
         await self.say(
-            f"Vou acionar o agente com o modelo {handoff.model}, esforço {handoff.effort}."
+            f"Vou acionar o agente com o modelo {handoff.model}, esforço {handoff.effort}, {mode}."
         )
         self.s.worker_text = []
         self.s.state = State.WORKING
@@ -151,6 +185,7 @@ class Bridge:
                 ask_user_cb=self._ask_user,
                 approval_cb=self._approval,
                 on_message=self._on_worker_message,
+                cwd=self.s.target_repo,
             )
         except Exception as exc:
             log.exception("Falha no worker")

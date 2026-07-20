@@ -24,8 +24,11 @@ Componentes: FastAPI + WebSocket (UI web local, push-to-talk) · STT `faster-whi
 
 - **`ANTHROPIC_API_KEY`** (obrigatório) — a mesma chave do Claude Code; usada pelo Jarvis (Haiku) e
   pelo worker. Vai no arquivo `.env`.
-- Um **repositório alvo** onde o worker vai atuar (`HOST_TARGET_REPO` no Docker, `JARVIS_TARGET_REPO`
-  local). Pode ser o próprio projeto que você está desenvolvendo.
+- Um **repositório alvo** é **opcional**: você define (ou troca) o caminho na própria interface,
+  durante a conversa. Sem ele, o Jarvis funciona em **modo conversa** (raciocina/responde/planeja,
+  mas não altera arquivos). O repositório só é necessário quando você quer que o worker **edite
+  arquivos**. Você pode pré-definir um padrão via `HOST_TARGET_REPO` (Docker) / `JARVIS_TARGET_REPO`
+  (local), mas não é obrigatório.
 - **Docker** (fluxo recomendado) **ou** **Python 3.12 + [uv](https://docs.astral.sh/uv/)** (fluxo local).
 - Um navegador (Chrome/Edge recomendados p/ o microfone). O microfone é pedido pelo navegador.
 
@@ -56,10 +59,13 @@ Requisitos: Python 3.12, `uv` e `ANTHROPIC_API_KEY`.
 
 ## Uso
 
-1. Segure o botão do microfone e fale (ou digite) o que precisa.
-2. O Jarvis pergunta e refina; quando terminar, clique em **Encerrar conversa**.
-3. O worker roda no seu repositório; acompanhe o detalhe na tela e o resumo por voz.
-4. Se aparecer uma pergunta, responda por voz/texto; se pedir autorização, use **Autorizar/Negar**.
+1. (Opcional) Informe o **repositório alvo** no campo do topo — só é preciso se quiser alterar
+   arquivos. Deixe vazio para o modo conversa.
+2. Segure o botão do microfone e fale, **ou** digite. Você também pode **anexar arquivos** (📎) —
+   imagens, PDFs, texto/código — e colar imagens/links no campo de texto.
+3. O Jarvis pergunta e refina; quando terminar, clique em **Encerrar conversa**.
+4. O worker roda (no repositório, se definido); acompanhe o detalhe na tela e o resumo por voz.
+5. Se aparecer uma pergunta, responda por voz/texto; se pedir autorização, use **Autorizar/Negar**.
 
 ## Configuração
 

@@ -98,6 +98,13 @@ main {
   border-radius: 6px;
   font-size: 13px;
 }
+.attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); max-width: 220px; }
+.chip img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+.chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip button { padding: 0 4px; border: none; background: transparent; color: var(--muted); font-size: 12px; }
+.repo-bar { display: flex; gap: 8px; margin-bottom: 8px; }
+.repo-bar input { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); font-size: 13px; }
 .composer { display: flex; gap: 8px; margin-top: 8px; }
 .composer input {
   flex: 1;

@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import enum
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from .config import settings
 from .jarvis_brain import JarvisBrain
 
 
@@ -21,6 +23,9 @@ class State(str, enum.Enum):
 class Session:
     brain: JarvisBrain = field(default_factory=JarvisBrain)
     state: State = State.INTAKE
+    # Repositório alvo do worker (opcional). None = modo conversa (sem escrita).
+    # Inicia com o padrão de settings (pode ser None), mas é trocável na sessão.
+    target_repo: Path | None = field(default_factory=lambda: settings.target_repo)
     # Future resolvido pela próxima fala/decisão do usuário (ask_user / aprovação).
     pending: asyncio.Future | None = None
     worker_task: asyncio.Task | None = None

@@ -4,6 +4,7 @@ const logEl = $("#log");
 const workerEl = $("#worker-out");
 const statusEl = $("#status");
 const textEl = $("#text");
+const repoEl = $("#repo");
 
 let ws;
 
@@ -95,6 +96,9 @@ function connect() {
         addMsg(logEl, "jarvis", `Prompt gerado (${msg.model}/${msg.effort}).`);
         addWorkerBlock("code", msg.prompt);
         break;
+      case "repo":
+        repoEl.value = msg.path || "";
+        break;
       case "tts":
         if (msg.data) playAudio(msg.data, msg.format || "wav");
         break;
@@ -115,20 +119,108 @@ function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
 
+// --- Anexos (imagens, PDFs, texto/código…) ---
+let pendingAttachments = [];
+const attachmentsEl = $("#attachments");
+const fileEl = $("#file");
+
+function fileToAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result).split(",")[1] || "";
+      resolve({
+        kind: file.type.startsWith("image/") ? "image" : "file",
+        media_type: file.type || "application/octet-stream",
+        data: b64,
+        name: file.name || "arquivo",
+      });
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderAttachments() {
+  attachmentsEl.innerHTML = "";
+  pendingAttachments.forEach((att, i) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    if (att.kind === "image") {
+      const img = document.createElement("img");
+      img.src = `data:${att.media_type};base64,${att.data}`;
+      chip.appendChild(img);
+    }
+    const name = document.createElement("span");
+    name.textContent = att.name;
+    chip.appendChild(name);
+    const rm = document.createElement("button");
+    rm.textContent = "✕";
+    rm.onclick = () => {
+      pendingAttachments.splice(i, 1);
+      renderAttachments();
+    };
+    chip.appendChild(rm);
+    attachmentsEl.appendChild(chip);
+  });
+}
+
+async function addFiles(fileList) {
+  for (const file of fileList) {
+    try {
+      pendingAttachments.push(await fileToAttachment(file));
+    } catch {
+      setStatus(`falha ao ler ${file.name}`);
+    }
+  }
+  renderAttachments();
+}
+
 function sendText() {
   const t = textEl.value.trim();
-  if (!t) return;
-  send({ type: "text", text: t });
+  if (!t && pendingAttachments.length === 0) return;
+  send({ type: "text", text: t, attachments: pendingAttachments });
   textEl.value = "";
+  pendingAttachments = [];
+  renderAttachments();
 }
 
 $("#send").addEventListener("click", sendText);
 textEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendText();
 });
+
+$("#attach").addEventListener("click", () => fileEl.click());
+fileEl.addEventListener("change", () => {
+  if (fileEl.files.length) addFiles(fileEl.files);
+  fileEl.value = "";
+});
+textEl.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length) {
+    e.preventDefault();
+    addFiles(files);
+  }
+});
 $("#end").addEventListener("click", () =>
   send({ type: "control", action: "end_conversation" })
 );
+
+function setRepo() {
+  send({ type: "control", action: "set_repo", path: repoEl.value.trim() });
+}
+$("#set-repo").addEventListener("click", setRepo);
+repoEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") setRepo();
+});
+
+// Prefill do repositório com o padrão do servidor (se houver).
+fetch("/api/config")
+  .then((r) => r.json())
+  .then((c) => {
+    if (c.target_repo && !repoEl.value) repoEl.value = c.target_repo;
+  })
+  .catch(() => {});
 
 // --- Push-to-talk (MediaRecorder). STT no backend é ligado na fase de voz. ---
 let mediaRecorder = null;

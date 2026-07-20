@@ -18,7 +18,7 @@ class FakeMsg:
 
 
 class FakeBrain:
-    async def reply(self, text):
+    async def reply(self, text, attachments=None):
         return f"Entendi: {text}. Isso é tudo?"
 
     async def generate_handoff(self):

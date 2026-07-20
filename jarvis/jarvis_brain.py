@@ -12,12 +12,44 @@ O cliente é criado de forma preguiçosa para o módulo importar sem a chave/SDK
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import AsyncIterator, Literal
 
 from .config import settings
+
+_TEXT_MEDIA = ("text/", "application/json", "application/xml", "application/x-yaml")
+
+
+def _attachment_block(att: dict) -> dict:
+    """Converte um anexo {kind, media_type, data(base64), name} num bloco de conteúdo."""
+    mt = att.get("media_type") or ""
+    data = att.get("data") or ""
+    name = att.get("name") or "arquivo"
+    if att.get("kind") == "image" or mt.startswith("image/"):
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": mt or "image/png", "data": data},
+        }
+    if mt == "application/pdf":
+        return {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": data},
+        }
+    # Texto/código: embute o conteúdo como texto.
+    is_text = mt.startswith(_TEXT_MEDIA) or not mt
+    if is_text:
+        try:
+            text = base64.b64decode(data).decode("utf-8")
+            return {"type": "text", "text": f"Arquivo anexado ({name}):\n\n{text}"}
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return {
+        "type": "text",
+        "text": f"[arquivo anexado: {name} ({mt or 'desconhecido'}) — conteúdo não legível como texto]",
+    }
 
 Complexity = Literal["trivial", "simple", "moderate", "complex", "architectural"]
 
@@ -52,6 +84,22 @@ class InterpretedAnswer:
     answer: str
     needs_followup: bool
     followup_question: str | None
+
+
+def _content_text(content) -> str:
+    """Renderiza o conteúdo de uma mensagem (str ou lista de blocos) como texto."""
+    if isinstance(content, str):
+        return content
+    parts: list[str] = []
+    for block in content:
+        btype = block.get("type")
+        if btype == "text":
+            parts.append(block["text"])
+        elif btype == "image":
+            parts.append("[imagem]")
+        elif btype == "document":
+            parts.append("[documento]")
+    return " ".join(parts)
 
 
 _INTAKE_SYSTEM = """\
@@ -112,9 +160,20 @@ class JarvisBrain:
         self.history: list[dict] = []
 
     # ---- Intake --------------------------------------------------------
-    async def reply_stream(self, user_text: str) -> AsyncIterator[str]:
-        """Turno de intake: transmite a resposta do Jarvis em pedaços de texto."""
-        self.history.append({"role": "user", "content": user_text})
+    async def reply_stream(
+        self, user_text: str, attachments: list[dict] | None = None
+    ) -> AsyncIterator[str]:
+        """Turno de intake: transmite a resposta do Jarvis em pedaços de texto.
+
+        `attachments` é uma lista opcional de {kind, media_type, data(base64), name}
+        (imagens, PDFs, texto/código). Haiku é multimodal.
+        """
+        content: list[dict] = [_attachment_block(a) for a in (attachments or [])]
+        if user_text:
+            content.append({"type": "text", "text": user_text})
+        if not content:
+            return
+        self.history.append({"role": "user", "content": content})
         parts: list[str] = []
         async with _client().messages.stream(
             model=settings.jarvis_model,
@@ -127,13 +186,15 @@ class JarvisBrain:
                 yield text
         self.history.append({"role": "assistant", "content": "".join(parts)})
 
-    async def reply(self, user_text: str) -> str:
-        return "".join([chunk async for chunk in self.reply_stream(user_text)])
+    async def reply(self, user_text: str, attachments: list[dict] | None = None) -> str:
+        return "".join(
+            [chunk async for chunk in self.reply_stream(user_text, attachments)]
+        )
 
     # ---- Handoff -------------------------------------------------------
     async def generate_handoff(self) -> Handoff:
         transcript = "\n".join(
-            f"{m['role']}: {m['content']}" for m in self.history
+            f"{m['role']}: {_content_text(m['content'])}" for m in self.history
         )
         schema = {
             "type": "object",

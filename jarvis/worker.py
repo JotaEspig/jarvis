@@ -41,11 +41,29 @@ async def _ask_user_impl(args: dict) -> dict:
     return {"content": [{"type": "text", "text": answer}]}
 
 
-async def _needs_approval(tool_name: str, approval_cb: ApprovalCb, input_data: dict) -> bool:
-    """Decisão pura de permissão: True = pode rodar."""
+async def _permission(
+    tool_name: str,
+    input_data: dict,
+    *,
+    allow_writes: bool,
+    approval_cb: ApprovalCb,
+) -> tuple[bool, str]:
+    """Decisão pura de permissão. Retorna (permitido, motivo_da_negação).
+
+    Ferramentas que alteram arquivos (`approval_required_tools`):
+      - sem repositório alvo (allow_writes=False): negadas estruturalmente;
+      - com repositório: pedem aprovação por voz.
+    Demais ferramentas (leitura/raciocínio) são liberadas.
+    """
     if tool_name in settings.approval_required_tools:
-        return await approval_cb(tool_name, input_data)
-    return True
+        if not allow_writes:
+            return False, (
+                "Para alterar arquivos eu preciso do caminho do repositório. "
+                "Defina o repositório alvo na sessão e tente de novo."
+            )
+        ok = await approval_cb(tool_name, input_data)
+        return ok, "" if ok else "Usuário não aprovou a ação por voz."
+    return True, ""
 
 
 def _build_user_interaction_server():
@@ -74,17 +92,26 @@ async def run_task(
 
     Cria um `ClaudeSDKClient` novo por tarefa com o modelo/effort do handoff
     (o SDK não expõe `set_effort()` dinâmico).
+
+    `cwd` é o repositório alvo (opcional). Sem ele, o worker roda num diretório
+    temporário e as ferramentas de escrita são negadas (modo conversa).
     """
+    import tempfile
+
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
     from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
 
     _ask_user_cb.set(ask_user_cb)
-    repo = str(cwd or settings.target_repo)
+    allow_writes = cwd is not None
+    repo = str(cwd) if cwd is not None else tempfile.mkdtemp(prefix="jarvis-scratch-")
 
     async def can_use_tool(tool_name: str, input_data: dict, context: Any):
-        if await _needs_approval(tool_name, approval_cb, input_data):
+        ok, reason = await _permission(
+            tool_name, input_data, allow_writes=allow_writes, approval_cb=approval_cb
+        )
+        if ok:
             return PermissionResultAllow(updated_input=input_data)
-        return PermissionResultDeny(message="Usuário não aprovou a ação por voz.")
+        return PermissionResultDeny(message=reason)
 
     options = ClaudeAgentOptions(
         model=handoff.model,

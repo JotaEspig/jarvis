@@ -1,11 +1,12 @@
 """Testa o handoff do Jarvis (modelo `anthropic` mockado) e o mapeamento de complexidade."""
 
 import asyncio
+import base64
 import json
 
 from jarvis import jarvis_brain
 from jarvis.config import settings
-from jarvis.jarvis_brain import Handoff, JarvisBrain
+from jarvis.jarvis_brain import Handoff, JarvisBrain, _attachment_block
 
 
 class _Block:
@@ -65,6 +66,25 @@ def test_generate_handoff(monkeypatch):
     assert h.title == "CLI de data"
     assert h.model == settings.worker_model_complex  # architectural -> opus
     assert h.effort == "xhigh"
+
+
+def test_attachment_block_types():
+    # Imagem -> bloco image
+    img = _attachment_block({"kind": "image", "media_type": "image/png", "data": "AA=="})
+    assert img["type"] == "image" and img["source"]["media_type"] == "image/png"
+
+    # PDF -> bloco document
+    pdf = _attachment_block({"kind": "file", "media_type": "application/pdf", "data": "AA=="})
+    assert pdf["type"] == "document" and pdf["source"]["media_type"] == "application/pdf"
+
+    # Texto -> bloco text com o conteúdo embutido
+    data = base64.b64encode("print('oi')".encode()).decode()
+    txt = _attachment_block({"kind": "file", "media_type": "text/x-python", "data": data, "name": "a.py"})
+    assert txt["type"] == "text" and "print('oi')" in txt["text"] and "a.py" in txt["text"]
+
+    # Binário desconhecido -> nota textual (não quebra)
+    bin_ = _attachment_block({"kind": "file", "media_type": "application/octet-stream", "data": "//80", "name": "x.bin"})
+    assert bin_["type"] == "text" and "x.bin" in bin_["text"]
 
 
 def test_interpret_answer(monkeypatch):
