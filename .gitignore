@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Configuração local / segredos
+.env
+
+# Caches / modelos de voz baixados
+.cache/
+*.onnx
+*.onnx.json
+
+# Ferramentas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

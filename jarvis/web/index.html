@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jarvis</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Jarvis</h1>
+      <span id="status" class="status">desconectado</span>
+    </header>
+
+    <main>
+      <section class="panel conversation">
+        <h2>Conversa</h2>
+        <div id="log" class="log"></div>
+        <div class="composer">
+          <button id="mic" class="mic" title="Segure para falar (push-to-talk)">🎙️</button>
+          <input id="text" type="text" placeholder="ou digite aqui…" autocomplete="off" />
+          <button id="send">Enviar</button>
+        </div>
+        <div class="controls">
+          <button id="end">Encerrar conversa</button>
+        </div>
+      </section>
+
+      <section class="panel worker">
+        <h2>Worker <span id="worker-model" class="tag"></span></h2>
+        <div id="worker-out" class="worker-out"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
