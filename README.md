@@ -1,87 +1,134 @@
 # Jarvis
 
-Assistente de desenvolvimento por **voz** que atua como **ponte** para o Claude.
+Assistente pessoal por voz, no estilo do JARVIS do Homem de Ferro. Você o chama pela wake-word e
+conversa naturalmente: ele entende o que você quer, responde em no máximo 3 frases e delega a
+execução (codar, mexer em arquivos, pesquisar na web, usar seus MCPs, abrir apps) para agentes
+Claude mais fortes, que trabalham em background e avisam quando terminam.
 
-Você conversa por voz com o Jarvis (modelo barato, Haiku 4.5). Ele discute, faz perguntas e, quando
-você encerra, gera um prompt bem formulado e escolhe o modelo/esforço do **worker** conforme a
-complexidade. O worker é um coding agent real (Sonnet 5 ou Opus 4.8) que age no seu repositório e
-herda skills/subagents/MCP/CLAUDE.md locais e globais. Se o worker precisa de algo (uma pergunta ou
-aprovação para uma ação arriscada), o Jarvis repassa por voz. As entregas chegam como **resumo por
-voz + detalhe na tela**.
+- **Sem custo extra:** usa só a sua assinatura do Claude (token do `claude setup-token`), e toda a
+  voz roda localmente (wake-word, VAD, STT e TTS).
+- **Funciona no Linux e no WSL:** no WSL, o áudio roda nativo no Windows.
 
-## Como funciona
+## Arquitetura
 
 ```
-Você (voz) ⇄ Jarvis (Haiku)  ── gera prompt + escolhe modelo/effort ──▶  Worker (Sonnet 5 / Opus 4.8)
-              ▲   tradutor/ponte                                            │ age no repo, usa skills/agents
-              └───────── pergunta / aprovação (por voz) ───────────────────┘
+EDGE (Linux, ou Windows quando o core está no WSL)
+  mic → AEC (WebRTC) → wake-word (openWakeWord) → VAD (Silero) ──┐    playback + barge-in
+                                                                 │    bandeja · notificações
+                         WebSocket local (eventos + PCM) ⇅ ──────┘
+CORE (Linux / WSL)
+  STT Parakeet TDT v3 (sherpa-onnx), com decodificação por trechos
+   → endereçamento (a fala é para mim?)
+   → FRONT: Claude Haiku, sessão persistente: lapida a fala, conversa curta, decide agir
+       → TTS Kokoro, frase a frase, em streaming
+       → BACK: Claude Sonnet (padrão) / Opus (complexo), várias tarefas em paralelo:
+               plano → validação → execução → resumo falado
+               ações arriscadas pedem aprovação por voz
 ```
 
-Componentes: FastAPI + WebSocket (UI web local, push-to-talk) · STT `faster-whisper` · TTS `Piper`
-(voz pt-BR) · Jarvis via SDK `anthropic` · worker via **Claude Agent SDK**.
+| Etapa | Implementação | Latência típica (i5 4 threads, sem GPU) |
+|---|---|---|
+| Fim da fala | VAD com 600 ms de silêncio | 0,6 s |
+| STT | Parakeet v3 int8, só o último trecho | ~0,25 s |
+| Haiku | sessão SDK aquecida, streaming | ~0,9–1,3 s até a 1ª frase |
+| TTS | Kokoro int8, 1ª frase cortada na vírgula | ~0,4–0,8 s |
+
+Por que cada escolha:
+
+- **Agent SDK + sessão persistente:** o token de assinatura só funciona pelo CLI do Claude Code.
+  Manter a sessão aberta tira o custo de subir o processo a cada fala.
+- **Parakeet em vez de Whisper:** o Whisper sempre processa uma janela de 30 s (2,7 s por fala no
+  `small`); o Parakeet leva ~0,15 s por segundo de áudio e lida bem com termos técnicos em inglês.
+- **Edge separado:** no WSL o áudio pelo WSLg tem latência alta e não tem AEC, então o edge roda nativo no Windows.
 
 ## Pré-requisitos
 
-- **`ANTHROPIC_API_KEY`** (obrigatório) — a mesma chave do Claude Code; usada pelo Jarvis (Haiku) e
-  pelo worker. Vai no arquivo `.env`.
-- Um **repositório alvo** é **opcional**: você define (ou troca) o caminho na própria interface,
-  durante a conversa. Sem ele, o Jarvis funciona em **modo conversa** (raciocina/responde/planeja,
-  mas não altera arquivos). O repositório só é necessário quando você quer que o worker **edite
-  arquivos**. Você pode pré-definir um padrão via `HOST_TARGET_REPO` (Docker) / `JARVIS_TARGET_REPO`
-  (local), mas não é obrigatório.
-- **Docker** (fluxo recomendado) **ou** **Python 3.12 + [uv](https://docs.astral.sh/uv/)** (fluxo local).
-- Um navegador (Chrome/Edge recomendados p/ o microfone). O microfone é pedido pelo navegador.
+- Assinatura do Claude e o [Claude Code](https://claude.com/claude-code) instalado (o SDK usa o CLI).
+- Token gerado com `claude setup-token`, guardado em `~/.config/jarvis/token` ou exportado em
+  `CLAUDE_CODE_OAUTH_TOKEN`. Se existir uma `ANTHROPIC_API_KEY` no ambiente, o Jarvis a **remove**
+  dos processos dele, para nunca cobrar via API.
+- [uv](https://docs.astral.sh/uv/) (o Python 3.11 é baixado por ele).
+- ~2 GB livres de RAM para os modelos de voz (o Parakeet sozinho ocupa ~1 GB).
 
-## Instalação para a equipe (Docker — recomendado)
+## Instalação
 
-Modelos de voz já vêm embutidos na imagem; só precisa de `ANTHROPIC_API_KEY`.
+### Linux (core + edge)
 
 ```bash
-git clone git@github.com:JotaEspig/jarvis.git && cd jarvis
-cp .env.example .env      # preencha ANTHROPIC_API_KEY e HOST_TARGET_REPO
-docker compose up --build
+./deploy/install-linux.sh        # venv, modelos, token, config e serviço systemd de usuário
 ```
 
-Abra http://localhost:8765. O `HOST_TARGET_REPO` do seu `.env` é montado em `/workspace` (onde o
-worker atua); seu `~/.claude` é montado read-only para herdar skills/agents globais. O microfone é
-acessado pelo navegador, então funciona em qualquer SO.
+Para ter o ícone na bandeja no Wayland (Hyprland/waybar etc.), o instalador inclui o extra `tray`
+quando encontra a `libayatana-appindicator`.
 
-## Instalação local (uv)
+### WSL (core no WSL, edge no Windows)
+
+1. No WSL, com systemd habilitado (`[boot] systemd=true` em `/etc/wsl.conf`): `./deploy/install-linux.sh`
+   (ele detecta o WSL e instala só o core).
+2. No Windows (PowerShell): `powershell -ExecutionPolicy Bypass -File deploy\install-windows-edge.ps1`
+   (instala o `jarvis[edge]` via uv a partir do repo no WSL e o coloca na inicialização).
+
+O edge conecta em `ws://127.0.0.1:8766`; o `localhost` do Windows alcança o WSL2. No WSL, as
+ações de desktop do worker (abrir arquivos, pastas, URLs e apps) agem no Windows via `powershell.exe`.
+
+### Desenvolvimento
 
 ```bash
-git clone git@github.com:JotaEspig/jarvis.git && cd jarvis
-./install.sh                              # cria .venv, instala e baixa os modelos de voz
-# edite o .env (ANTHROPIC_API_KEY, JARVIS_TARGET_REPO)
-source .venv/bin/activate && jarvis       # sobe o servidor e abre o navegador
+uv venv --python 3.11 && uv pip install -e ".[core,edge,dev]"
+jarvis doctor                # credencial, latência do Haiku, modelos, áudio
+jarvis edge --loopback       # testa mic/VAD/AEC sem o core: fale e ouça de volta
+jarvis say "Olá, Jota."      # testa o TTS
+jarvis run                   # core + edge
+pytest
 ```
-
-Requisitos: Python 3.12, `uv` e `ANTHROPIC_API_KEY`.
 
 ## Uso
 
-1. (Opcional) Informe o **repositório alvo** no campo do topo — só é preciso se quiser alterar
-   arquivos. Deixe vazio para o modo conversa.
-2. Segure o botão do microfone e fale, **ou** digite. Você também pode **anexar arquivos** (📎) —
-   imagens, PDFs, texto/código — e colar imagens/links no campo de texto.
-3. O Jarvis pergunta e refina; quando terminar, clique em **Encerrar conversa**.
-4. O worker roda (no repositório, se definido); acompanhe o detalhe na tela e o resumo por voz.
-5. Se aparecer uma pergunta, responda por voz/texto; se pedir autorização, use **Autorizar/Negar**.
+1. Diga a wake-word (padrão: **"hey jarvis"**, pronunciado em inglês). Toca um bip e a conversa abre.
+2. Fale normalmente; depois da wake-word não precisa repeti-la enquanto a conversa estiver aberta.
+   Falas que não parecem dirigidas a ele (conversa com outra pessoa, telefone) são ignoradas.
+3. Ele confirma em uma frase e despacha a tarefa. Você pode seguir conversando ou pedir outras
+   tarefas em paralelo.
+4. Diga "valeu, só isso" para encerrar; a conversa também fecha após ~10 s de silêncio. As
+   tarefas continuam em background.
+5. Quando uma tarefa termina, ou precisa de uma resposta ou aprovação sua, ele toca um bip, fala
+   e manda uma notificação. A conversa reabre por alguns segundos, sem precisar da wake-word.
+6. Interrompa a qualquer momento falando por cima dele (barge-in).
+
+Para citar projetos por voz ("no projeto jarvis…"): todo repo git em `projects_root` (padrão
+`~/dev`) já vale. Para apelidos, use `jarvis projects add portal ~/work/portal-do-cliente`.
+
+### Wake-word própria
+
+Veja [tools/wakeword/README.md](tools/wakeword/README.md): treino gratuito no Colab e calibração
+com `jarvis wakeword`.
 
 ## Configuração
 
-Tudo por variáveis de ambiente (prefixo `JARVIS_`) — veja `.env.example` e `jarvis/config.py`.
-Modelos: `JARVIS_JARVIS_MODEL` (Haiku), `JARVIS_WORKER_MODEL_SIMPLE` (Sonnet 5),
-`JARVIS_WORKER_MODEL_COMPLEX` (Opus 4.8). Voz: `JARVIS_WHISPER_MODEL`, `JARVIS_PIPER_VOICE`.
+`~/.config/jarvis/config.toml`. Veja [config.example.toml](config.example.toml) para todas as
+opções: voz e velocidade do TTS (`kokoro`/`piper`), tempos de silêncio, janela de conversa,
+modelos do front e do back, projetos.
 
-## Testes
+As instruções dos agentes ficam em [jarvis/prompts/front.md](jarvis/prompts/front.md) (persona,
+regra das 3 frases, quando despachar) e [jarvis/prompts/back.md](jarvis/prompts/back.md)
+(protocolo plano → validação → execução → `RESUMO_FALADO`). O back também herda suas skills,
+MCPs e CLAUDE.md do Claude Code.
 
-```bash
-pip install -e ".[dev]" && pytest       # testes rápidos (o round-trip de voz é marcado `slow`)
-```
+## Segurança
 
-## Troubleshooting
+Três camadas, para que um mal-entendido (como o STT ouvir "lixo" em vez de "lista") não vire estrago:
 
-- **Sem áudio / microfone:** o navegador exige contexto seguro; `http://localhost` e `127.0.0.1`
-  contam como seguros. Autorize o microfone quando o navegador pedir.
-- **STT/TTS "indisponível":** os modelos não baixaram — rode `python -m jarvis.download` (ou rebuild
-  da imagem). A app continua funcionando por texto/tela enquanto isso.
+1. **Front:** o Haiku nunca acrescenta intenção que você não disse. Pedidos que excluem, movem,
+   arquivam, sobrescrevem ou descartam algo são repetidos em uma frase com "Confirma?" antes de
+   serem despachados.
+2. **Exclusão definitiva é proibida:** `rm`, `rmdir`, `unlink`, `shred`, `find -delete`,
+   `git clean`, `shutil.rmtree`, `Remove-Item` e afins são bloqueados. O worker só pode mandar
+   arquivos para a **lixeira** com o `trash-put` ([trash-cli](https://github.com/andreafrancia/trash-cli)),
+   recuperáveis com `trash-restore`, e mesmo isso pede confirmação por voz.
+3. **Aprovação por voz** para o resto do que é arriscado: `git push`/`rebase`/`reset --hard`,
+   `git rm`, descartar alterações, `sudo`, requisições HTTP de escrita, execução no Windows,
+   qualquer escrita fora do projeto (inclusive `mv`/`cp`/`mkdir` seguindo os `cd` do comando) e tools
+   de MCP que enviam, criam ou apagam coisas (e-mail, Teams etc.).
+
+Ler, editar arquivos dentro do projeto e rodar comandos comuns seguem sem perguntar. Regras em
+[jarvis/core/risk.py](jarvis/core/risk.py).

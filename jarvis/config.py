@@ -1,54 +1,117 @@
-"""Configuração central do Jarvis (lida de env / .env via pydantic-settings)."""
+"""Configuração do Jarvis.
+
+Fontes, em ordem de prioridade: variáveis de ambiente (`JARVIS_*`) > `~/.config/jarvis/config.toml`
+> defaults abaixo. Chaves aninhadas no ambiente usam `__` (ex.: `JARVIS_STT__MODEL=small`).
+"""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from typing import Literal
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, TomlConfigSettingsSource
+
+CONFIG_DIR = Path(os.environ.get("JARVIS_CONFIG_DIR", Path.home() / ".config" / "jarvis"))
+DATA_DIR = Path(os.environ.get("JARVIS_DATA_DIR", Path.home() / ".local" / "share" / "jarvis"))
+MODELS_DIR = DATA_DIR / "models"
+
+
+class LinkConfig(BaseModel):
+    """Conexão edge ⇄ core (WebSocket local)."""
+
+    host: str = "127.0.0.1"
+    port: int = 8766
+
+
+class AudioConfig(BaseModel):
+    input_device: str | int | None = None
+    output_device: str | int | None = None
+    aec: bool = True
+    noise_suppression: bool = True
+
+
+class WakeWordConfig(BaseModel):
+    # Nome de um modelo pré-treinado do openWakeWord ou caminho para um .onnx/.tflite treinado.
+    model: str = "hey_jarvis"
+    threshold: float = 0.5
+    notify: bool = True  # notificação no desktop a cada ativação
+
+
+class VadConfig(BaseModel):
+    threshold: float = 0.5
+    # Silêncio que fecha um segmento de fala (fim do turno do usuário).
+    end_silence_ms: int = 700
+    min_speech_ms: int = 250
+    max_segment_s: float = 30.0
+    # Fala contínua durante o playback necessária para disparar o barge-in.
+    barge_in_ms: int = 250
+
+
+class SttConfig(BaseModel):
+    # Parakeet TDT v3 (sherpa-onnx): multilíngue com pt, sem a janela fixa de 30 s do Whisper.
+    threads: int = 0  # 0 = automático (núcleos - 1)
+    # Trechos menores que isso não são decodificados numa pausa (evita cortar palavras).
+    min_chunk_s: float = 1.5
+
+
+class TtsConfig(BaseModel):
+    engine: Literal["kokoro", "piper"] = "kokoro"
+    kokoro_voice: str = "pm_alex"
+    speed: float = 1.1
+    piper_voice: str = "pt_BR-faber-medium"
+
+
+class FrontConfig(BaseModel):
+    model: str = "claude-haiku-5-5"
+    max_sentences: int = 3
+    # Janela de conversa: silêncio (após a última fala do assistente) que a encerra.
+    window_s: float = 10.0
+    # Janela curta reaberta quando uma tarefa termina e o assistente avisa.
+    reopen_s: float = 6.0
+    # Recicla a sessão do Haiku após N turnos (latência e cota).
+    recycle_turns: int = 30
+
+
+class BackConfig(BaseModel):
+    model_default: str = "claude-sonnet-5-5"
+    model_complex: str = "claude-opus-5-5"
+    fallback_model: str = "claude-sonnet-5-5"
+    max_parallel: int = 3
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
         env_prefix="JARVIS_",
+        env_nested_delimiter="__",
+        toml_file=CONFIG_DIR / "config.toml",
         extra="ignore",
     )
 
-    # --- Servidor web ---
-    host: str = "127.0.0.1"
-    port: int = 8765
+    assistant_name: str = "Jarvis"
+    user_name: str = "senhor"  # como o assistente chama você (nome ou tratamento)
+    projects_root: list[Path] = [Path.home() / "dev"]
 
-    # --- Autenticação Anthropic ---
-    # Usada tanto pelo SDK `anthropic` (Jarvis/Haiku) quanto pelo `claude-agent-sdk` (worker).
-    # Lida do ambiente padrão ANTHROPIC_API_KEY se não vier via JARVIS_ANTHROPIC_API_KEY.
-    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    link: LinkConfig = LinkConfig()
+    audio: AudioConfig = AudioConfig()
+    wakeword: WakeWordConfig = WakeWordConfig()
+    vad: VadConfig = VadConfig()
+    stt: SttConfig = SttConfig()
+    tts: TtsConfig = TtsConfig()
+    front: FrontConfig = FrontConfig()
+    back: BackConfig = BackConfig()
 
-    # --- Modelos ---
-    jarvis_model: str = "claude-haiku-4-5"  # cérebro conversacional (barato)
-    worker_model_simple: str = "claude-sonnet-5"  # tarefas simples
-    worker_model_complex: str = "claude-opus-4-8"  # tarefas complexas
-    worker_fallback_model: str = "claude-opus-4-8"
-
-    # --- Repositório alvo do worker (opcional) ---
-    # Diretório em que o coding agent atua. É OPCIONAL e definido dinamicamente na
-    # sessão (pela UI). Só é obrigatório para ALTERAR arquivos; sem ele, o Jarvis
-    # funciona em modo conversa (o worker pode raciocinar, mas não escreve).
-    # Este valor serve apenas de padrão inicial da sessão (ex.: /workspace no Docker).
-    target_repo: Path | None = None
-
-    # --- Voz ---
-    whisper_model: str = "small"  # tiny/base/small/medium/large-v3
-    whisper_device: str = "auto"  # auto/cpu/cuda
-    whisper_language: str = "pt"
-    piper_voice: str = "pt_BR-faber-medium"  # voz Piper pt-BR
-    voice_dir: Path = Field(
-        default_factory=lambda: Path.home() / ".cache" / "jarvis" / "voices"
-    )
-
-    # --- Política de aprovação ---
-    # Ferramentas que exigem aprovação por voz antes de rodar.
-    approval_required_tools: tuple[str, ...] = ("Bash", "Edit", "Write", "NotebookEdit")
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings, env_settings, TomlConfigSettingsSource(settings_cls))
 
 
-settings = Settings()  # instância única importável
+settings = Settings()

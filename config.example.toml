@@ -1,0 +1,44 @@
+# Copie para ~/.config/jarvis/config.toml (no Windows: %USERPROFILE%\.config\jarvis\config.toml).
+# Qualquer chave também pode vir do ambiente: JARVIS_<SEÇÃO>__<CHAVE>, ex.: JARVIS_TTS__ENGINE=piper
+
+assistant_name = "Jarvis"
+user_name = "senhor"               # como o assistente chama você
+projects_root = ["~/dev"]          # repos git aqui viram projetos citáveis por voz
+
+[link]                             # edge ⇄ core
+host = "127.0.0.1"
+port = 8766
+
+[audio]
+# input_device = "pipewire"        # nome/índice (veja `python -m sounddevice`)
+aec = true                         # cancelamento de eco (barge-in com caixa de som)
+noise_suppression = true
+
+[wakeword]
+model = "hey_jarvis"               # ou caminho para um .onnx treinado (tools/wakeword/README.md)
+threshold = 0.5
+notify = true                      # notificação no desktop a cada ativação
+
+[vad]
+end_silence_ms = 700               # silêncio que encerra sua fala (menor = mais rápido, mais cortes)
+barge_in_ms = 250                  # fala contínua necessária para interromper o assistente
+
+[stt]
+threads = 0                        # 0 = automático
+
+[tts]
+engine = "kokoro"                  # "kokoro" (mais natural) ou "piper" (mais rápido)
+kokoro_voice = "pm_alex"           # pm_alex, pm_santa, pf_dora
+speed = 1.1
+piper_voice = "pt_BR-faber-medium"
+
+[front]
+model = "claude-haiku-5-5"
+max_sentences = 3
+window_s = 10.0                    # silêncio que fecha a conversa
+reopen_s = 6.0                     # janela reaberta quando uma tarefa termina
+
+[back]
+model_default = "claude-sonnet-5-5"
+model_complex = "claude-opus-5-5"
+max_parallel = 3

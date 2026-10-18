@@ -1,0 +1,13 @@
+# WSL: só o core (o edge de áudio roda nativo no Windows). Requer systemd habilitado no WSL
+# ([boot] systemd=true em /etc/wsl.conf).
+[Unit]
+Description=Jarvis core (WSL)
+
+[Service]
+ExecStart=%h/.local/share/jarvis/venv/bin/jarvis core
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
