@@ -64,7 +64,7 @@ class TtsConfig(BaseModel):
 
 
 class FrontConfig(BaseModel):
-    model: str = "claude-haiku-4-5"
+    model: str = "claude-haiku-5-5"
     max_sentences: int = 3
     # Janela de conversa: silêncio (após a última fala do assistente) que a encerra.
     window_s: float = 10.0

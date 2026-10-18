@@ -33,7 +33,7 @@ speed = 1.1
 piper_voice = "pt_BR-faber-medium"
 
 [front]
-model = "claude-haiku-4-5"
+model = "claude-haiku-5-5"
 max_sentences = 3
 window_s = 10.0                    # silêncio que fecha a conversa
 reopen_s = 6.0                     # janela reaberta quando uma tarefa termina
