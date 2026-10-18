@@ -116,7 +116,19 @@ MCPs e CLAUDE.md do Claude Code.
 
 ## Segurança
 
-O back pode agir sozinho em leitura, em edição de arquivos **dentro do projeto** e em comandos comuns. Pedem
-aprovação por voz: apagar arquivos, `git push`/`reset --hard`/`rebase`, `sudo`, requisições HTTP
-de escrita, execução no Windows, escrita fora do projeto e tools de MCP que enviam, criam ou apagam
-coisas (e-mail, Teams etc.). Regras em [jarvis/core/risk.py](jarvis/core/risk.py).
+Três camadas, para que um mal-entendido (como o STT ouvir "lixo" em vez de "lista") não vire estrago:
+
+1. **Front:** o Haiku nunca acrescenta intenção que você não disse. Pedidos que excluem, movem,
+   arquivam, sobrescrevem ou descartam algo são repetidos em uma frase com "Confirma?" antes de
+   serem despachados.
+2. **Exclusão definitiva é proibida:** `rm`, `rmdir`, `unlink`, `shred`, `find -delete`,
+   `git clean`, `shutil.rmtree`, `Remove-Item` e afins são bloqueados. O worker só pode mandar
+   arquivos para a **lixeira** com o `trash-put` ([trash-cli](https://github.com/andreafrancia/trash-cli)),
+   recuperáveis com `trash-restore`, e mesmo isso pede confirmação por voz.
+3. **Aprovação por voz** para o resto do que é arriscado: `git push`/`rebase`/`reset --hard`,
+   `git rm`, descartar alterações, `sudo`, requisições HTTP de escrita, execução no Windows,
+   qualquer escrita fora do projeto (inclusive `mv`/`cp`/`mkdir` seguindo os `cd` do comando) e tools
+   de MCP que enviam, criam ou apagam coisas (e-mail, Teams etc.).
+
+Ler, editar arquivos dentro do projeto e rodar comandos comuns seguem sem perguntar. Regras em
+[jarvis/core/risk.py](jarvis/core/risk.py).

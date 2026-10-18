@@ -35,15 +35,30 @@ class Edge:
         self.aec = EchoCanceller(aec=settings.audio.aec, noise_suppression=settings.audio.noise_suppression)
         self.player = Player(self.aec, device=settings.audio.output_device, on_done=self._on_playback_done)
         self.listener = Listener(settings, self.aec, self.player, SILERO_VAD, emit=self._emit,
-                                 on_wake=lambda: self.player.earcon("wake"))
+                                 on_wake=self._on_wake)
         self.tray = Tray(self._on_tray)
         self._notifier = None
+        self._wake_notification: str | None = None
         self._loop_buf: list[bytes] = []
 
     # ---- pontes entre threads ------------------------------------------------------------
 
     def _emit(self, item) -> None:
         self.loop.call_soon_threadsafe(self.out.put_nowait, item)
+
+    def _on_wake(self) -> None:  # thread do listener
+        self.player.earcon("wake")
+        if settings.wakeword.notify:
+            self.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self._notify_wake()))
+
+    async def _notify_wake(self) -> None:
+        # Substitui a notificação da ativação anterior, para não empilhar.
+        if self._wake_notification and self._notifier is not None:
+            try:
+                await self._notifier.clear(self._wake_notification)
+            except Exception:
+                pass
+        self._wake_notification = await self._notify("Jarvis", "Ouvindo…", timeout=4)
 
     def _on_playback_done(self, utt: str, interrupted: bool) -> None:
         self._emit(PlaybackDone(utterance_id=utt, interrupted=interrupted))
@@ -123,15 +138,18 @@ class Edge:
                 case State():
                     self.tray.update(msg.state, msg.tasks)
 
-    async def _notify(self, title: str, body: str) -> None:
+    async def _notify(self, title: str, body: str, timeout: int = -1) -> str | None:
         try:
             if self._notifier is None:
                 from desktop_notifier import DesktopNotifier
 
                 self._notifier = DesktopNotifier(app_name="Jarvis")
-            await self._notifier.send(title=title, message=body)
+            ident = await self._notifier.send(title=title, message=body, timeout=timeout)
+            log.info("notificação exibida: %s — %s", title, body[:60])
+            return ident
         except Exception:
             log.warning("falha ao notificar: %s — %s", title, body, exc_info=True)
+            return None
 
     async def _loopback(self) -> None:
         while True:

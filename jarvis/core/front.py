@@ -7,6 +7,7 @@ worker, encerrar conversa, ignorar fala...). Responde em streaming; o texto vai 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import tempfile
 from dataclasses import dataclass, field
@@ -166,7 +167,7 @@ class FrontBrain:
             yield item
 
     async def _produce(self, message: str, user_text: str, q: asyncio.Queue) -> None:
-        from claude_agent_sdk.types import ResultMessage, StreamEvent
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, StreamEvent, ToolUseBlock
 
         reply: list[str] = []
         try:
@@ -188,6 +189,11 @@ class FrontBrain:
                             q.put_nowait(ev["delta"]["text"])
                     elif ev.get("type") == "content_block_stop":
                         q.put_nowait("\n")  # fim de bloco: fala o que ficou pendente antes de uma tool
+                elif isinstance(msg, AssistantMessage):
+                    for block in msg.content:
+                        if isinstance(block, ToolUseBlock):
+                            log.info("🔧 front: %s %s", block.name.removeprefix("mcp__jarvis__"),
+                                     json.dumps(block.input, ensure_ascii=False)[:300])
                 elif isinstance(msg, ResultMessage) and msg.is_error:
                     log.error("front: erro %s", msg.result)
         except Exception:

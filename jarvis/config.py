@@ -36,6 +36,7 @@ class WakeWordConfig(BaseModel):
     # Nome de um modelo pré-treinado do openWakeWord ou caminho para um .onnx/.tflite treinado.
     model: str = "hey_jarvis"
     threshold: float = 0.5
+    notify: bool = True  # notificação no desktop a cada ativação
 
 
 class VadConfig(BaseModel):

@@ -61,6 +61,8 @@ class Session:
     # ---- link com o edge -------------------------------------------------------------------
 
     async def send(self, msg) -> None:
+        if isinstance(msg, Notify):
+            log.info("🔔 %s%s", msg.title, "" if self.link else " (sem edge conectado)")
         if self.link is not None:
             try:
                 await self.link.send(dump(msg))
@@ -315,6 +317,9 @@ class Session:
 
     async def _on_task_event(self, task: Task, kind: EventKind) -> None:
         await self.push_state()
+        icon = {"started": "▶", "cancelled": "⏹", "done": "✅", "failed": "❌", "question": "❓", "approval": "🔐"}[kind]
+        detail = task.pending.text if task.pending else task.spoken_summary
+        log.info("%s tarefa #%s %s%s", icon, task.id, kind, f": {detail}" if detail else "")
         if kind in ("started", "cancelled"):
             return
         if kind in ("done", "failed"):
@@ -351,6 +356,7 @@ class Session:
             asyncio.ensure_future(self.set_state("speaking"))
 
         self.speech.on_first_audio = first_audio
+        log.info("📣 %s", text)
         utt = await self.speech.say(text)
         self.assistant_asked = needs_reply
         await self._finish_speech(utt)

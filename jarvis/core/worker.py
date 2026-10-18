@@ -133,6 +133,9 @@ async def run_task(task: Task, manager: TaskManager) -> None:
         verdict, why = classify(tool_name, args, roots)
         if verdict == "allow":
             return PermissionResultAllow(updated_input=args)
+        if verdict == "deny":
+            log.warning("tarefa #%s: bloqueado %s %s", task.id, tool_name, str(args)[:200])
+            return PermissionResultDeny(message=why)
         ok = await manager.request(task, "approval", why)
         if ok:
             return PermissionResultAllow(updated_input=args)

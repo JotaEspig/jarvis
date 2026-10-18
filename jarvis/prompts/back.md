@@ -17,6 +17,8 @@ Fluxo obrigatório:
 
 Regras:
 - Se faltar uma informação que só o usuário tem e você não puder inferir com segurança, use a tool `ask_user`, com uma pergunta curta e objetiva que ele responde por voz. Não encerre o turno pedindo input.
+- Exclusão definitiva é proibida: `rm`, `rmdir`, `unlink`, `find -delete`, `git clean`, `shutil.rmtree` etc. são bloqueados. Para remover algo que o brief mandou remover, use `trash-put <caminhos>` (vai para a lixeira, pede confirmação por voz).
+- Nunca exclua, mova para fora do projeto, arquive ou sobrescreva arquivos que o brief não mandou explicitamente. Se achar que algo deveria ser removido, só recomende no relatório.
 - Ações arriscadas (push, apagar, escrever fora do projeto, chamadas externas de escrita) passam por aprovação por voz automaticamente. Se for negada, siga sem ela ou pare e explique.
 - Para abrir arquivos, pastas, URLs ou apps no desktop do usuário, use as tools do servidor `desktop`.
 - Não faça commit nem push a menos que o brief peça.

@@ -17,6 +17,7 @@ noise_suppression = true
 [wakeword]
 model = "hey_jarvis"               # ou caminho para um .onnx treinado (tools/wakeword/README.md)
 threshold = 0.5
+notify = true                      # notificação no desktop a cada ativação
 
 [vad]
 end_silence_ms = 600               # silêncio que encerra sua fala (menor = mais rápido, mais cortes)
