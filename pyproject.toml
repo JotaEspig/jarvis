@@ -1,28 +1,44 @@
 [project]
 name = "jarvis"
-version = "0.1.0"
-description = "Jarvis — assistente de desenvolvimento por voz, ponte para o Claude"
+version = "0.2.0"
+description = "Jarvis — assistente pessoal por voz (edge de áudio local + core com Claude via setup-token)"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 dependencies = [
-    "anthropic>=0.69",
-    "claude-agent-sdk>=0.1.0",
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "faster-whisper>=1.0",
-    "piper-tts>=1.2",
-    "numpy>=1.26",
-    "soundfile>=0.12",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
-    "python-multipart>=0.0.9",
+    "websockets>=13",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
+# Edge: captura/playback de áudio, AEC, wake-word, VAD, bandeja e notificações.
+# Roda nativo no Linux ou no Windows (quando o core está no WSL).
+edge = [
+    "sounddevice>=0.5",
+    "onnxruntime>=1.18",
+    "openwakeword>=0.6",
+    "livekit>=1.0",
+    "desktop-notifier>=6",
+    "pystray>=0.19",
+    "pillow>=10",
+]
+# Core: STT, TTS, cérebro (Haiku) e workers (Sonnet/Opus) via Claude Agent SDK.
+core = [
+    "claude-agent-sdk>=0.1.0",
+    "sherpa-onnx>=1.12",
+    "kokoro-onnx>=0.4",
+    "piper-tts>=1.2",
+    "soundfile>=0.12",
+]
+# Bandeja no Linux/Wayland (StatusNotifierItem via appindicator). Requer libayatana-appindicator e
+# gobject-introspection do sistema para compilar.
+tray = ["pygobject<3.51; sys_platform == 'linux'"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.scripts]
 jarvis = "jarvis.cli:main"
+jarvis-edge = "jarvis.edge.main:main"
 
 [build-system]
 requires = ["hatchling"]

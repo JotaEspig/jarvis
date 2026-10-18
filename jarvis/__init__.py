@@ -1,3 +1,3 @@
-"""Jarvis — assistente de desenvolvimento por voz, ponte para o Claude."""
+"""Jarvis — assistente pessoal por voz."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
