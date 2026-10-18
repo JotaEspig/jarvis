@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from concurrent.futures import Executor
 
@@ -20,6 +21,17 @@ from ..download import PARAKEET_DIR, fetch_parakeet
 from ..protocol import MIC_RATE
 
 log = logging.getLogger(__name__)
+
+# O Parakeet às vezes "alucina" uma muleta em inglês no silêncio final ("Yeah.", "Okay.").
+_TRAILING_FILLER = re.compile(r"(?:(?<=[.!?,])|^)\s*(yeah|yes|okay|ok|uh|um|mm+(-hmm)?|hmm+|oh|ah|right|so)[.!?]*\s*$",
+                              re.I)
+
+
+def clean_transcript(text: str) -> str:
+    prev = None
+    while prev != text:  # pode haver mais de uma ("Okay. Yeah.")
+        prev, text = text, _TRAILING_FILLER.sub("", text).strip()
+    return text
 
 
 class Stt:
@@ -51,8 +63,10 @@ class Stt:
 class Utterance:
     """Uma fala do usuário sendo recebida e decodificada por trechos."""
 
-    def __init__(self, stt: Stt, executor: Executor):
+    def __init__(self, stt: Stt, executor: Executor, trim_tail_ms: int = 0):
         self._stt = stt
+        # Silêncio que o VAD esperou para fechar a fala: cortado antes de transcrever.
+        self._trim = int(trim_tail_ms * MIC_RATE / 1000) * 2
         self._executor = executor
         self._buf = bytearray()
         self._parts: list[asyncio.Future] = []
@@ -72,9 +86,11 @@ class Utterance:
             self._flush()
 
     async def finish(self) -> str:
+        if self._trim:
+            del self._buf[max(0, len(self._buf) - self._trim):]
         self._flush()
         parts = await asyncio.gather(*self._parts)
-        return " ".join(p for p in parts if p).strip()
+        return clean_transcript(" ".join(p for p in parts if p).strip())
 
     def cancel(self) -> None:
         for f in self._parts:

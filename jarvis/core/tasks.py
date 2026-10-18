@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
@@ -37,9 +38,45 @@ class Task:
     spoken_summary: str = ""
     report: str = ""
     activity: str = ""
+    history: deque = field(default_factory=lambda: deque(maxlen=8))  # (timestamp, passo)
+    plan: str = ""
     pending: PendingRequest | None = None
     created: float = field(default_factory=time.time)
+    started: float | None = None
+    finished: float | None = None
     handle: asyncio.Task | None = None
+
+    def log_activity(self, text: str) -> None:
+        if text and text != self.activity:
+            self.activity = text
+            self.history.append((time.time(), text))
+
+    def detail(self) -> str:
+        """Relatório de status para o front resumir em voz."""
+        now = time.time()
+        lines = [f"Tarefa #{self.id} ({self.model_label}, projeto {self.project.name if self.project else 'nenhum'}): "
+                 f"{self.status}."]
+        lines.append(f"Pedido: {self.brief}")
+        if self.started:
+            lines.append(f"Tempo: {_fmt_duration((self.finished or now) - self.started)}"
+                         f"{' no total' if self.finished else ' até agora'}.")
+        elif self.status == "na fila":
+            lines.append("Ainda na fila (limite de tarefas paralelas).")
+        if self.pending:
+            kind = "pergunta" if self.pending.kind == "question" else "pede aprovação para"
+            lines.append(f"Esperando o mestre: {kind} {self.pending.text}")
+        if self.status in ("planejando", "executando", "aguardando você") and self.activity:
+            lines.append(f"Fazendo agora: {self.activity}")
+        if self.history:
+            steps = "; ".join(f"{_fmt_duration(now - t)} atrás: {a}" for t, a in list(self.history)[-5:])
+            lines.append(f"Últimos passos: {steps}")
+        if self.plan:
+            lines.append(f"Plano (resumo): {self.plan[:600]}")
+        if self.status in ("concluída", "falhou"):
+            lines.append(f"Resultado: {self.spoken_summary}")
+            if self.report:
+                lines.append(f"Relatório: {self.report[:800]}")
+        return "\n".join(lines)
 
     @property
     def model_label(self) -> str:
@@ -56,6 +93,24 @@ class Task:
 
 OnEvent = Callable[[Task, EventKind], Awaitable[None]]
 Runner = Callable[["Task", "TaskManager"], Awaitable[None]]
+
+
+def _fmt_duration(sec: float) -> str:
+    sec = int(sec)
+    if sec < 60:
+        return f"{sec}s"
+    m, s = divmod(sec, 60)
+    return f"{m}min{s:02d}s" if m < 60 else f"{m // 60}h{m % 60:02d}min"
+
+
+_NUMBER_WORDS = {"um": "1", "uma": "1", "dois": "2", "duas": "2", "tres": "3", "três": "3", "quatro": "4",
+                 "cinco": "5", "seis": "6", "sete": "7", "oito": "8", "nove": "9", "dez": "10"}
+
+
+def normalize_task_id(raw: str) -> str:
+    """'#2', 'tarefa 2', 'dois', 'Tarefa Dois' → '2'."""
+    t = raw.strip().lower().lstrip("#").removeprefix("tarefa").strip().lstrip("#").strip()
+    return _NUMBER_WORDS.get(t, t)
 
 
 def make_title(brief: str, n: int = 8) -> str:
@@ -92,6 +147,7 @@ class TaskManager:
             if self.start_gate is not None:
                 await self.start_gate()
             async with self._sem:
+                task.started = time.time()
                 await self.on_event(task, "started")
                 await self._runner(task, self)
             task.status = "concluída"
@@ -105,6 +161,7 @@ class TaskManager:
             task.spoken_summary = task.spoken_summary or f"A tarefa falhou: {str(e)[:120]}"
             await self.on_event(task, "failed")
         finally:
+            task.finished = time.time()
             if task.pending and not task.pending.future.done():
                 task.pending.future.cancel()
             task.pending = None
@@ -127,7 +184,7 @@ class TaskManager:
 
     def get(self, task_id: str | None) -> Task | None:
         if task_id:
-            return self.tasks.get(task_id.lstrip("#"))
+            return self.tasks.get(normalize_task_id(task_id))
         pend = self.pending()
         return pend[0] if len(pend) == 1 else None
 

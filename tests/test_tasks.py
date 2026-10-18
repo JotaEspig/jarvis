@@ -59,3 +59,30 @@ def test_parse_result():
     assert s == "Pronto, testes passando." and r == "Mudei a.py e rodei os testes."
     s, r = parse_result("Fiz tudo. Detalhes aqui.")
     assert s == "Fiz tudo."
+
+
+def test_task_detail_and_id_normalization():
+    async def runner(task, mgr):
+        task.status = "executando"
+        task.log_activity("editando soma.py")
+        task.log_activity("rodando: pytest -q")
+        await asyncio.sleep(10)
+
+    async def main():
+        async def on_event(task, kind):
+            pass
+
+        mgr = TaskManager(BackConfig(), on_event, runner=runner)
+        mgr.dispatch("primeira", None)
+        t2 = mgr.dispatch("cria testes para soma", None)
+        await asyncio.sleep(0.05)
+        found = [mgr.get(x) for x in ("2", "#2", "tarefa 2", "dois", "Tarefa Dois")]
+        detail = t2.detail()
+        for t in mgr.tasks.values():
+            t.handle.cancel()
+        return found, t2, detail
+
+    found, t2, detail = asyncio.run(main())
+    assert all(f is t2 for f in found)
+    assert "executando" in detail and "rodando: pytest -q" in detail and "cria testes para soma" in detail
+    assert "Tempo:" in detail

@@ -39,7 +39,7 @@ def _text(s: str) -> dict:
 
 def front_prompt(cfg: Settings) -> str:
     tpl = resources.files("jarvis.prompts").joinpath("front.md").read_text()
-    return tpl.format(name=cfg.assistant_name, title=cfg.user_title)
+    return tpl.format(name=cfg.assistant_name, user=cfg.user_name)
 
 
 class FrontBrain:
@@ -48,6 +48,7 @@ class FrontBrain:
         self.cfg: FrontConfig = settings.front
         self.session = session
         self.flags = TurnFlags()
+        self.allow_ignore = False  # só falas incertas podem ser ignoradas
         self._client = None
         self._lock = asyncio.Lock()
         self._turns = 0
@@ -73,8 +74,13 @@ class FrontBrain:
                 msg += " Encerre o turno sem escrever mais nada."
             return _text(msg)
 
-        @tool("task_status", "Estado das tarefas recentes.", {})
+        @tool("task_status", "Status das tarefas. task_id = número da tarefa para o detalhe (fase, tempo, o que "
+              "está fazendo, últimos passos, resultado); vazio = resumo de todas.", {"task_id": str})
         async def task_status(args: dict) -> dict:
+            tid = (args.get("task_id") or "").strip()
+            if tid:
+                t = s.tasks.get(tid)
+                return _text(t.detail() if t else f"Não existe tarefa #{tid.lstrip('#')}. {s.tasks_summary()}")
             return _text(s.tasks_summary() or "Nenhuma tarefa.")
 
         @tool("cancel_task", "Cancela uma tarefa pelo id.", {"task_id": str})
@@ -102,6 +108,8 @@ class FrontBrain:
 
         @tool("ignore", "A fala não era dirigida a você: não responda.", {})
         async def ignore(args: dict) -> dict:
+            if not self.allow_ignore:
+                return _text("Esta fala É para você (veio após a wake-word ou é resposta direta). Responda normalmente.")
             self.flags.ignored = True
             return _text("Ignorado. Não escreva nada.")
 

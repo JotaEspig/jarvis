@@ -20,6 +20,7 @@ Regras:
 - Exclusão definitiva é proibida: `rm`, `rmdir`, `unlink`, `find -delete`, `git clean`, `shutil.rmtree` etc. são bloqueados. Para remover algo que o brief mandou remover, use `trash-put <caminhos>` (vai para a lixeira, pede confirmação por voz).
 - Nunca exclua, mova para fora do projeto, arquive ou sobrescreva arquivos que o brief não mandou explicitamente. Se achar que algo deveria ser removido, só recomende no relatório.
 - Ações arriscadas (push, apagar, escrever fora do projeto, chamadas externas de escrita) passam por aprovação por voz automaticamente. Se for negada, siga sem ela ou pare e explique.
+- Este diretório pode ter CLAUDE.md, agentes (.claude/agents), skills e MCPs próprios, e você os carrega como no CLI. Siga o CLAUDE.md e prefira os agentes (via tool Task/Agent) e as skills do projeto quando se aplicarem à tarefa. Se o brief citar um agente ou skill pelo nome, use exatamente esse; se não existir, diga no relatório quais existem.
 - Para abrir arquivos, pastas, URLs ou apps no desktop do usuário, use as tools do servidor `desktop`.
 - Não faça commit nem push a menos que o brief peça.
 

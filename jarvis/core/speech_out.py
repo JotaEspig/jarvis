@@ -97,8 +97,23 @@ async def limit_sentences(deltas: AsyncIterator[str], max_sentences: int) -> Asy
                 spoken += 1
         return out
 
+    in_bracket = False
+
+    def strip_brackets(d: str) -> str:
+        """Remove [metacomentários] do modelo, mesmo quando partidos entre deltas."""
+        nonlocal in_bracket
+        out = []
+        for ch in d:
+            if ch == "[":
+                in_bracket = True
+            elif ch == "]" and in_bracket:
+                in_bracket = False
+            elif not in_bracket:
+                out.append(ch)
+        return "".join(out)
+
     async for d in deltas:
-        d = _EMOJI.sub("", d.replace("*", "").replace("`", ""))
+        d = _EMOJI.sub("", strip_brackets(d).replace("*", "").replace("`", ""))
         for piece in take(splitter.feed(d)):
             yield piece
         if spoken >= max_sentences:

@@ -31,3 +31,17 @@ def test_side_conversation_is_not_accepted():
 def test_direct_command_after_a_while():
     assert decide("abre o navegador no github", AddressContext(since_assistant_s=12)) == "accept"
     assert decide("abre o navegador no github", AddressContext(since_assistant_s=120)) == "ambiguous"
+
+
+def test_after_ignored_only_strong_signals_accept():
+    ctx = AddressContext(since_assistant_s=3.0, after_ignored=True)
+    assert decide("pode fazer isso então", ctx) == "ambiguous"
+    assert decide("abre o navegador no github", ctx) == "ambiguous"
+    assert decide("jarvis, abre o navegador", ctx) == "accept"
+    assert decide("sim", AddressContext(since_assistant_s=3.0, assistant_asked=True, after_ignored=True)) == "accept"
+
+
+def test_follow_up_requests_accept():
+    ctx = AddressContext(since_assistant_s=5.0)
+    assert decide("então no projeto agentes usa o agente revisor", ctx) == "accept"
+    assert decide("verifica o status da tarefa dois", ctx) == "accept"

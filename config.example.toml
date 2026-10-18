@@ -2,7 +2,7 @@
 # Qualquer chave também pode vir do ambiente: JARVIS_<SEÇÃO>__<CHAVE>, ex.: JARVIS_TTS__ENGINE=piper
 
 assistant_name = "Jarvis"
-user_title = "senhor"
+user_name = "senhor"               # como o assistente chama você
 projects_root = ["~/dev"]          # repos git aqui viram projetos citáveis por voz
 
 [link]                             # edge ⇄ core
@@ -20,7 +20,7 @@ threshold = 0.5
 notify = true                      # notificação no desktop a cada ativação
 
 [vad]
-end_silence_ms = 600               # silêncio que encerra sua fala (menor = mais rápido, mais cortes)
+end_silence_ms = 700               # silêncio que encerra sua fala (menor = mais rápido, mais cortes)
 barge_in_ms = 250                  # fala contínua necessária para interromper o assistente
 
 [stt]

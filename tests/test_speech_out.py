@@ -64,3 +64,18 @@ def test_speech_out_streams_one_utterance():
     assert utt and spoken == "Oi. Tudo certo. Feito."
     assert isinstance(sent[0], TtsStart) and isinstance(sent[-1], TtsEnd)
     assert sum(isinstance(x, bytes) for x in sent) == 3
+
+
+def test_clean_transcript_strips_hallucinated_fillers():
+    from jarvis.core.stt import clean_transcript
+
+    assert clean_transcript("Procure o projeto na pasta dev. Yeah.") == "Procure o projeto na pasta dev."
+    assert clean_transcript("É esse projeto mesmo, tá? Okay. Yeah.") == "É esse projeto mesmo, tá?"
+    assert clean_transcript("Okay.") == ""
+    assert clean_transcript("deixa okay o layout") == "deixa okay o layout"
+    assert clean_transcript("roda o build ok") == "roda o build ok"
+
+
+def test_bracketed_meta_comments_are_never_spoken():
+    assert _collect(["[Sem resposta — endereçamento ", "incerto, fala não dirigida a mim.]"]) == []
+    assert _collect(["Ok, senhor. [nota: tarefa", " #2] Já despachei."]) == ["Ok, senhor.", "Já despachei."]

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
+from collections import deque
 from concurrent.futures import Executor
 from datetime import datetime
 from typing import Literal
@@ -18,7 +20,7 @@ from typing import Literal
 from ..config import Settings
 from ..protocol import (Earcon, Hello, Listen, Notify, PlaybackDone, SpeechCancel, SpeechEnd, SpeechPause,
                         SpeechStart, State, StopAudio, TaskInfo, UserCommand, Wake, dump)
-from .addressing import AddressContext, decide
+from .addressing import AddressContext, decide, normalize
 from .front import FrontBrain
 from .projects import ProjectRegistry
 from .speech_out import SpeechOut
@@ -30,6 +32,17 @@ log = logging.getLogger(__name__)
 
 StateName = Literal["idle", "listening", "thinking", "speaking"]
 PLAYBACK_TIMEOUT_S = 90.0
+# Fala que termina num conectivo/muleta provavelmente não acabou: espera a continuação.
+INCOMPLETE_GRACE_S = 1.2
+_INCOMPLETE_END = re.compile(
+    r"\b(e|ou|mas|de|do|da|dos|das|que|para|pra|pro|com|em|no|na|nos|nas|o|a|os|as|um|uma|uns|umas|"
+    r"tipo|entao|porque|se|quando|como|onde|pelo|pela|ao|aos|meu|minha|seu|sua|esse|essa|este|esta|"
+    r"eh|hum|hmm|sobre|sem|ate|aquele|aquela)$"
+)
+# Falas ignoradas (não eram para o assistente) ficam como contexto por este tempo.
+IGNORED_CONTEXT_S = 20.0
+# Nova fala logo após uma resposta interrompida = continuação da anterior.
+CONTINUATION_GAP_S = 4.0
 _WEEKDAYS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
 
 
@@ -51,6 +64,11 @@ class Session:
         self.assistant_asked = False
         self._timer: asyncio.TimerHandle | None = None
         self.events: list[str] = []
+        self._held: tuple[str, bool, bool, float] | None = None  # fala incompleta à espera
+        self._held_timer: asyncio.TimerHandle | None = None
+        self._last_sent_end = 0.0  # fim (perf_counter) da última fala enviada ao front
+        self._last_turn_interrupted = False
+        self._ignored: deque[tuple[float, str]] = deque(maxlen=5)  # (monotonic, texto)
         self._announcements: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
         self.projects = ProjectRegistry(settings.projects_root)
         self.tasks = task_manager or TaskManager(settings.back, self._on_task_event, start_gate=self._front_quiet)
@@ -144,11 +162,16 @@ class Session:
                 await self.set_state("listening")
             case SpeechStart():
                 self._cancel_timer()
-                if msg.barge_in or msg.after_wake:
+                if self._held_timer is not None:  # continuou a frase incompleta
+                    self._held_timer.cancel()
+                    self._held_timer = None
+                if msg.barge_in or msg.after_wake or (self._busy_turn() and self.state == "thinking"):
                     await self._cancel_turn()
                 if self.utt:
                     self.utt.cancel()
-                self.utt = Utterance(self.stt, self.executor)
+                # Corta o silêncio final (menos uma folga de 350 ms para não comer a última sílaba).
+                self.utt = Utterance(self.stt, self.executor,
+                                     trim_tail_ms=max(0, self.settings.vad.end_silence_ms - 350))
                 self._utt_flags = (msg.after_wake, msg.barge_in)
                 await self.set_state("listening")
             case SpeechPause():
@@ -183,6 +206,7 @@ class Session:
 
     async def _cancel_turn(self) -> None:
         if self._busy_turn():
+            self._last_turn_interrupted = True
             self.turn_task.cancel()
             await self.front.interrupt()
         if self.current_utt:
@@ -193,41 +217,84 @@ class Session:
         t_end = time.perf_counter()
         text = await utt.finish()
         t_stt = time.perf_counter()
+        if self._held is not None:  # junta com o começo da frase que estava à espera
+            prev, prev_wake, prev_barge, _ = self._held
+            self._held = None
+            text = f"{prev} {text}".strip()
+            after_wake, barge_in = after_wake or prev_wake, barge_in or prev_barge
         if not text:
             self._restart_timer()
             return
+        continuation = self._last_turn_interrupted and utt.started - self._last_sent_end < CONTINUATION_GAP_S
+        if not continuation and _INCOMPLETE_END.search(normalize(text)):
+            log.info("🎤 %r … (parece incompleta, aguardando %.1fs)", text, INCOMPLETE_GRACE_S)
+            self._held = (text, after_wake, barge_in, t_end)
+            self._held_timer = asyncio.get_running_loop().call_later(
+                INCOMPLETE_GRACE_S, lambda: asyncio.ensure_future(self._release_held()))
+            return
+        await self._handle_text(text, after_wake, barge_in, t_end, continuation, t_stt - t_end)
+
+    async def _release_held(self) -> None:
+        """Ninguém continuou a frase: segue com o que foi dito."""
+        self._held_timer = None
+        if self._held is None or self.utt is not None:
+            return
+        text, after_wake, barge_in, t_end = self._held
+        self._held = None
+        await self._handle_text(text, after_wake, barge_in, t_end, False, 0.0)
+
+    async def _handle_text(self, text: str, after_wake: bool, barge_in: bool, t_end: float,
+                           continuation: bool, stt_s: float) -> None:
         since = time.monotonic() - self.last_assistant_end if self.last_assistant_end else 1e9
         ctx = AddressContext(after_wake=after_wake, barge_in=barge_in, since_assistant_s=since,
                              assistant_asked=self.assistant_asked, pending_request=bool(self.tasks.pending()),
-                             name=self.settings.assistant_name)
-        decision = decide(text, ctx)
-        log.info("🎤 %r → %s (stt %.0f ms)", text, decision, (t_stt - t_end) * 1000)
+                             after_ignored=bool(self._recent_ignored()), name=self.settings.assistant_name)
+        decision = "accept" if continuation else decide(text, ctx)
+        log.info("🎤 %r → %s%s (stt %.0f ms)", text, decision, " [continuação]" if continuation else "",
+                 stt_s * 1000)
         if decision == "reject":
+            self._ignored.append((time.monotonic(), text))
             self._restart_timer()
             if not self._busy_turn():
                 await self.set_state("listening" if self.open else "idle")
             return
         await self._cancel_turn()
-        self.turn_task = asyncio.create_task(self._turn(text, decision == "ambiguous", t_end))
+        self._last_sent_end = t_end
+        self._last_turn_interrupted = False
+        self.turn_task = asyncio.create_task(self._turn(text, decision == "ambiguous", t_end, continuation))
 
-    def compose(self, text: str, ambiguous: bool = False) -> str:
+    def _recent_ignored(self) -> list[tuple[float, str]]:
+        now = time.monotonic()
+        return [(t, x) for t, x in self._ignored if now - t < IGNORED_CONTEXT_S]
+
+    def compose(self, text: str, ambiguous: bool = False, continuation: bool = False) -> str:
         cur = self.projects.current
         now = datetime.now().astimezone()
         parts = [f"agora: {_WEEKDAYS[now.weekday()]} {now:%d/%m/%Y %H:%M} (UTC{now:%z})",
-                 f"projeto atual: {cur.name if cur else 'nenhum'}"]
+                 f"projeto atual: {cur.name if cur else 'nenhum'}",
+                 f"projetos conhecidos: {', '.join(self.projects.names())}"]
         active = self.tasks.active()
         if active:
             parts.append("tarefas: " + "; ".join(t.line() for t in active))
         if self.events:
             parts.append("eventos novos: " + " | ".join(self.events))
             self.events.clear()
+        ignored = self._recent_ignored()
+        if ignored:
+            now = time.monotonic()
+            parts.append("falas recentes que NÃO eram para você: "
+                         + "; ".join(f'"{x}" (há {now - t:.0f}s)' for t, x in ignored))
         header = "[contexto] " + " · ".join(parts)
         if ambiguous:
             header += "\n[endereçamento incerto]"
+        if continuation:
+            return (f"{header}\nMestre (continuação da fala anterior, que você não chegou a responder; "
+                    f"considere as duas juntas e não repita ações já feitas): {text}")
         return f"{header}\nMestre: {text}"
 
-    async def _turn(self, text: str, ambiguous: bool, t_end: float) -> None:
-        await self.send(Earcon(name="ack"))
+    async def _turn(self, text: str, ambiguous: bool, t_end: float, continuation: bool = False) -> None:
+        if not ambiguous:  # na dúvida, silêncio total: nada de bip se ele acabar ignorando
+            await self.send(Earcon(name="ack"))
         await self.set_state("thinking")
         utt_ready: list[str] = []
 
@@ -239,10 +306,14 @@ class Session:
             asyncio.ensure_future(self.set_state("speaking"))
 
         self.speech.on_first_audio = first_audio
-        utt, spoken = await self.speech.speak_stream(self.front.ask(self.compose(text, ambiguous), text))
+        self.front.allow_ignore = ambiguous
+        utt, spoken = await self.speech.speak_stream(self.front.ask(self.compose(text, ambiguous, continuation), text))
         flags = self.front.flags
+        if flags.ignored:
+            self._ignored.append((time.monotonic(), text))
+            log.info("🙈 ignorada: %r", text)
         if not spoken and flags.dispatched:  # despachou sem confirmar em voz
-            spoken = f"Deixa comigo, {self.settings.user_title}."
+            spoken = f"Deixa comigo, {self.settings.user_name}."
             utt = await self.speech.say(spoken)
         if spoken:
             log.info("🗣 %s", spoken)
@@ -358,7 +429,7 @@ class Session:
         self.speech.on_first_audio = first_audio
         log.info("📣 %s", text)
         utt = await self.speech.say(text)
-        self.assistant_asked = needs_reply
+        self.assistant_asked = True  # um anúncio convida resposta ("é esse mesmo", "pode ir")
         await self._finish_speech(utt)
         if not needs_reply:
             self._restart_timer(self.settings.front.reopen_s)

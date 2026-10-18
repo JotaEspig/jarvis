@@ -116,7 +116,7 @@ def _build_servers(task: Task, manager: TaskManager) -> dict[str, Any]:
 async def run_task(task: Task, manager: TaskManager) -> None:
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
     from claude_agent_sdk.types import (AssistantMessage, PermissionResultAllow, PermissionResultDeny,
-                                        ResultMessage, ToolUseBlock)
+                                        ResultMessage, SystemMessage, ToolUseBlock)
 
     cfg = settings.back
     cwd = str(task.project) if task.project else tempfile.mkdtemp(prefix="jarvis-task-")
@@ -129,6 +129,8 @@ async def run_task(task: Task, manager: TaskManager) -> None:
             # Aprovar aqui faria o CLI sair do modo plan e executar no mesmo turno. Em vez disso,
             # captura o plano e encerra o turno; a execução começa na fase seguinte.
             plans.append(str(args.get("plan", "")))
+            task.plan = plans[-1]
+            task.log_activity("plano pronto")
             return PermissionResultDeny(message=PLAN_RECEIVED)
         verdict, why = classify(tool_name, args, roots)
         if verdict == "allow":
@@ -155,14 +157,24 @@ async def run_task(task: Task, manager: TaskManager) -> None:
         env=sdk_env(),
     )
 
+    init_logged = False
+
     async def turn(client: ClaudeSDKClient, prompt: str) -> str:
+        nonlocal init_logged
         await client.query(prompt)
         result = ""
         async for msg in client.receive_response():
-            if isinstance(msg, AssistantMessage):
+            if isinstance(msg, SystemMessage) and msg.subtype == "init" and not init_logged:
+                d = msg.data
+                builtin = {"general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide"}
+                agents = [a for a in d.get("agents", []) if a not in builtin]
+                log.info("🧩 tarefa #%s em %s — agentes: %s · skills: %d · MCPs: %d", task.id, Path(cwd).name,
+                         ", ".join(agents) or "nenhum", len(d.get("skills", [])), len(d.get("mcp_servers", [])))
+                init_logged = True
+            elif isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, ToolUseBlock):
-                        task.activity = _describe_tool(block.name, block.input)
+                        task.log_activity(_describe_tool(block.name, block.input))
             elif isinstance(msg, ResultMessage):
                 if msg.is_error:
                     raise RuntimeError(msg.result or msg.subtype)
@@ -171,11 +183,13 @@ async def run_task(task: Task, manager: TaskManager) -> None:
 
     async with ClaudeSDKClient(options=options) as client:
         task.status = "planejando"
+        task.log_activity("investigando e planejando")
         await turn(client, PLAN_PROMPT.format(brief=task.brief))
         if task.tier == "complex":
             await client.set_permission_mode("plan")
             await turn(client, CRITIQUE_PROMPT)
         task.status = "executando"
+        task.log_activity("começou a executar o plano")
         await client.set_permission_mode("acceptEdits")
         plan = f"Plano validado:\n{plans[-1]}" if plans and plans[-1] else "(use o plano validado acima)"
         final = await turn(client, EXECUTE_PROMPT.format(plan=plan))

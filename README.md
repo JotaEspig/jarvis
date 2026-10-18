@@ -77,7 +77,7 @@ ações de desktop do worker (abrir arquivos, pastas, URLs e apps) agem no Windo
 uv venv --python 3.11 && uv pip install -e ".[core,edge,dev]"
 jarvis doctor                # credencial, latência do Haiku, modelos, áudio
 jarvis edge --loopback       # testa mic/VAD/AEC sem o core: fale e ouça de volta
-jarvis say "Olá, senhor."    # testa o TTS
+jarvis say "Olá, Jota."      # testa o TTS
 jarvis run                   # core + edge
 pytest
 ```

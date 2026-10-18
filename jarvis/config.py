@@ -42,7 +42,7 @@ class WakeWordConfig(BaseModel):
 class VadConfig(BaseModel):
     threshold: float = 0.5
     # Silêncio que fecha um segmento de fala (fim do turno do usuário).
-    end_silence_ms: int = 600
+    end_silence_ms: int = 700
     min_speech_ms: int = 250
     max_segment_s: float = 30.0
     # Fala contínua durante o playback necessária para disparar o barge-in.
@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     )
 
     assistant_name: str = "Jarvis"
-    user_title: str = "senhor"
+    user_name: str = "senhor"  # como o assistente chama você (nome ou tratamento)
     projects_root: list[Path] = [Path.home() / "dev"]
 
     link: LinkConfig = LinkConfig()
