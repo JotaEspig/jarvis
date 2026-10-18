@@ -52,6 +52,7 @@ class SpeechCancel(BaseModel):
     """Segmento descartado (curto demais / ruído)."""
 
     type: Literal["speech_cancel"] = "speech_cancel"
+    reason: str = ""
 
 
 class PlaybackDone(BaseModel):

@@ -49,6 +49,9 @@ class FrontBrain:
         self.session = session
         self.flags = TurnFlags()
         self.allow_ignore = False  # só falas incertas podem ser ignoradas
+        self._turn_seq = 0
+        self._producing: int | None = None  # turno com resposta em andamento
+        self._interrupted: int | None = None  # turno que pedimos para interromper
         self._client = None
         self._lock = asyncio.Lock()
         self._turns = 0
@@ -155,11 +158,15 @@ class FrontBrain:
         await self.start(f"\n\nTrecho recente da conversa (para contexto):\n{memory}" if memory else "")
 
     async def interrupt(self) -> None:
-        if self._client is not None and self._lock.locked():
-            try:
-                await self._client.interrupt()
-            except Exception:
-                log.debug("falha ao interromper o front", exc_info=True)
+        """Interrompe só o turno que está produzindo agora (e lembra qual foi o alvo)."""
+        target = self._producing
+        if self._client is None or target is None:
+            return
+        self._interrupted = target
+        try:
+            await self._client.interrupt()
+        except Exception:
+            log.debug("falha ao interromper o front", exc_info=True)
 
     async def ask(self, message: str, user_text: str = "") -> AsyncIterator[str]:
         """Envia uma mensagem e devolve os deltas de texto da resposta (streaming).
@@ -175,9 +182,9 @@ class FrontBrain:
             yield item
 
     async def _produce(self, message: str, user_text: str, q: asyncio.Queue) -> None:
-        from claude_agent_sdk.types import AssistantMessage, ResultMessage, StreamEvent, ToolUseBlock
-
         reply: list[str] = []
+        self._turn_seq += 1
+        turn_id = self._turn_seq
         try:
             if self._client is None:
                 await self.start()
@@ -185,30 +192,70 @@ class FrontBrain:
                 await self._recycle()
             self.flags = TurnFlags()
             self._turns += 1
-            await self._client.query(message)
-            async for msg in self._client.receive_response():
-                if isinstance(msg, StreamEvent):
-                    ev: dict[str, Any] = msg.event
-                    if ev.get("type") == "content_block_delta" and ev["delta"].get("type") == "text_delta":
-                        # Depois de um dispatch bem-sucedido a confirmação já foi dita: o resto é
-                        # descartado (o modelo tende a anunciar "pronto" antes da hora).
-                        if not self.flags.ignored and not self.flags.dispatched:
-                            reply.append(ev["delta"]["text"])
-                            q.put_nowait(ev["delta"]["text"])
-                    elif ev.get("type") == "content_block_stop":
-                        q.put_nowait("\n")  # fim de bloco: fala o que ficou pendente antes de uma tool
-                elif isinstance(msg, AssistantMessage):
-                    for block in msg.content:
-                        if isinstance(block, ToolUseBlock):
-                            log.info("🔧 front: %s %s", block.name.removeprefix("mcp__jarvis__"),
-                                     json.dumps(block.input, ensure_ascii=False)[:300])
-                elif isinstance(msg, ResultMessage) and msg.is_error:
-                    log.error("front: erro %s", msg.result)
+            for attempt in range(2):
+                self._producing = turn_id
+                err = await self._run_query(message, q, reply)
+                self._producing = None
+                if err is None:
+                    break
+                aborted = (err.terminal_reason or "").startswith("aborted")
+                if aborted and self._interrupted == turn_id:
+                    break  # interrupção pedida para este turno (barge-in): tudo certo
+                spoke_or_acted = bool(reply) or self.flags.dispatched or self.flags.end_conversation
+                if attempt == 0 and not spoke_or_acted:
+                    log.warning("front: repetindo o turno após erro (%s)", _describe_error(err))
+                    await asyncio.sleep(0.5 if aborted else 1.5)
+                    continue
+                if not reply:
+                    q.put_nowait("Tive um problema para responder. Pode repetir?")
+                break
         except Exception:
             log.exception("front: falha no turno")
             await self.stop()  # a próxima chamada reconecta
+            if not reply:
+                q.put_nowait("Tive um problema para responder. Pode repetir?")
         finally:
+            self._producing = None
             self._history.append((user_text or message, "".join(reply)))
             self._history = self._history[-20:]
             q.put_nowait(None)
             self._lock.release()
+
+    async def _run_query(self, message: str, q: asyncio.Queue, reply: list[str]):
+        """Uma query ao Haiku. Retorna o ResultMessage de erro, ou None se deu certo."""
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, StreamEvent, ToolUseBlock
+
+        await self._client.query(message)
+        error = None
+        async for msg in self._client.receive_response():
+            if isinstance(msg, StreamEvent):
+                ev: dict[str, Any] = msg.event
+                if ev.get("type") == "content_block_delta" and ev["delta"].get("type") == "text_delta":
+                    # Depois de um dispatch bem-sucedido a confirmação já foi dita: o resto é
+                    # descartado (o modelo tende a anunciar "pronto" antes da hora).
+                    if not self.flags.ignored and not self.flags.dispatched:
+                        reply.append(ev["delta"]["text"])
+                        q.put_nowait(ev["delta"]["text"])
+                elif ev.get("type") == "content_block_stop":
+                    q.put_nowait("\n")  # fim de bloco: fala o que ficou pendente antes de uma tool
+            elif isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, ToolUseBlock):
+                        log.info("🔧 front: %s %s", block.name.removeprefix("mcp__jarvis__"),
+                                 json.dumps(block.input, ensure_ascii=False)[:300])
+            elif isinstance(msg, ResultMessage) and msg.is_error:
+                log.error("front: erro — %s", _describe_error(msg))
+                error = msg
+        return error
+
+
+def _describe_error(msg) -> str:
+    parts = [f"subtype={msg.subtype}"]
+    for attr in ("terminal_reason", "api_error_status", "stop_reason"):
+        if getattr(msg, attr, None):
+            parts.append(f"{attr}={getattr(msg, attr)}")
+    if getattr(msg, "errors", None):
+        parts.append(f"errors={msg.errors}")
+    if msg.result:
+        parts.append(f"result={msg.result[:200]!r}")
+    return " ".join(parts)

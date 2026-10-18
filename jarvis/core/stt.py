@@ -69,11 +69,31 @@ class Utterance:
         self._trim = int(trim_tail_ms * MIC_RATE / 1000) * 2
         self._executor = executor
         self._buf = bytearray()
+        self._all = bytearray() if os.environ.get("JARVIS_DEBUG_AUDIO") else None  # cópia p/ depuração
         self._parts: list[asyncio.Future] = []
         self.started = time.perf_counter()
 
     def add(self, pcm16: bytes) -> None:
         self._buf.extend(pcm16)
+        if self._all is not None:
+            self._all.extend(pcm16)
+
+    def save_debug(self, folder, text: str):
+        """Salva o áudio recebido (WAV) e a transcrição, para ouvir o que o STT recebeu."""
+        import wave
+        from datetime import datetime
+        from pathlib import Path
+
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = folder / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        with wave.open(str(stem.with_suffix(".wav")), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(MIC_RATE)
+            w.writeframes(bytes(self._all or b""))
+        stem.with_suffix(".txt").write_text(text + "\n")
+        return stem.with_suffix(".wav")
 
     def _flush(self) -> None:
         if self._buf:

@@ -49,7 +49,7 @@ class Segmenter:
         """Abre/fecha a janela. Fechar no meio de uma fala a descarta."""
         out: list = []
         if not open_ and self.in_speech:
-            out.append(SpeechCancel())
+            out.append(SpeechCancel(reason="janela fechou no meio da fala"))
             self._reset_segment()
         self.open = open_
         if not open_:
@@ -61,7 +61,8 @@ class Segmenter:
 
         Se havia um segmento em andamento, ele continha a própria wake-word e é descartado.
         """
-        out = self.set_open(False) if self.in_speech else []
+        out = [SpeechCancel(reason="wake-word no meio da fala")] if self.in_speech else []
+        self._reset_segment()
         self.open = True
         self._after_wake = True
         self._preroll.clear()
@@ -105,6 +106,6 @@ class Segmenter:
             if self._speech_ms >= c.min_speech_ms:
                 out.append(SpeechEnd(duration_ms=self._total_ms))
             else:
-                out.append(SpeechCancel())
+                out.append(SpeechCancel(reason=f"curta demais ({self._speech_ms} ms de voz)"))
             self._reset_segment()
         return out, False

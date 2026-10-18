@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections import deque
@@ -17,7 +18,7 @@ from concurrent.futures import Executor
 from datetime import datetime
 from typing import Literal
 
-from ..config import Settings
+from ..config import DATA_DIR, Settings
 from ..protocol import (Earcon, Hello, Listen, Notify, PlaybackDone, SpeechCancel, SpeechEnd, SpeechPause,
                         SpeechStart, State, StopAudio, TaskInfo, UserCommand, Wake, dump)
 from .addressing import AddressContext, decide, normalize
@@ -182,6 +183,7 @@ class Session:
                 if utt:
                     asyncio.create_task(self._on_utterance(utt, *self._utt_flags))
             case SpeechCancel():
+                log.info("🎙 fala descartada pelo edge: %s", msg.reason or "?")
                 if self.utt:
                     self.utt.cancel()
                 self.utt = None
@@ -217,6 +219,9 @@ class Session:
         t_end = time.perf_counter()
         text = await utt.finish()
         t_stt = time.perf_counter()
+        if os.environ.get("JARVIS_DEBUG_AUDIO"):
+            path = utt.save_debug(DATA_DIR / "debug", text)
+            log.info("💾 áudio da fala salvo em %s", path)
         if self._held is not None:  # junta com o começo da frase que estava à espera
             prev, prev_wake, prev_barge, _ = self._held
             self._held = None

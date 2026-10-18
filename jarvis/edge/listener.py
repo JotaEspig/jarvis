@@ -15,7 +15,7 @@ from typing import Callable
 import numpy as np
 
 from ..config import Settings
-from ..protocol import MIC_RATE, Wake
+from ..protocol import MIC_RATE, SpeechCancel, SpeechEnd, SpeechPause, SpeechStart, Wake
 from .aec import FRAME, EchoCanceller
 from .player import Player
 from .segmenter import Segmenter, SegmenterConfig
@@ -108,7 +108,21 @@ class Listener:
                     if barge:
                         self._player.stop()
                     for item in out:
-                        self._emit(item)
+                        self._out(item)
+
+    def _out(self, item) -> None:
+        """Emite para o core e registra o ciclo dos segmentos (diagnóstico de fala perdida)."""
+        match item:
+            case SpeechStart():
+                log.info("🎙 início de fala%s%s", " (após wake-word)" if item.after_wake else "",
+                         " (barge-in)" if item.barge_in else "")
+            case SpeechPause():
+                log.debug("🎙 pausa")
+            case SpeechEnd():
+                log.info("🎙 fim de fala (%.1f s)", item.duration_ms / 1000)
+            case SpeechCancel():
+                log.info("🎙 fala descartada: %s", item.reason or "?")
+        self._emit(item)
 
     def _drain_cmds(self) -> None:
         while True:
@@ -118,7 +132,7 @@ class Listener:
                 return
             if cmd == "open":
                 for item in self.seg.set_open(arg):
-                    self._emit(item)
+                    self._out(item)
 
     def _check_wake(self, chunk: np.ndarray) -> None:
         scores = self._oww.predict(chunk)
@@ -132,7 +146,7 @@ class Listener:
         if self._player.speaking:
             self._player.stop()
         for item in self.seg.wake():
-            self._emit(item)
+            self._out(item)
         self._vad.reset()
         self._emit(Wake(score=float(score)))
         if self._on_wake:
